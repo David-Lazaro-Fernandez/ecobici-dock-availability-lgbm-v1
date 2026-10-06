@@ -18,3 +18,9 @@ def split_of(month: str) -> str | None:
         if month in months:
             return name
     return None
+
+
+# Validation is split so the reported numbers never see a choice made on them:
+# early stopping and calibration use VAL_FIT; the M6 report scores VAL_REPORT.
+VAL_FIT = ("2025-08", "2025-09")
+VAL_REPORT = ("2025-10", "2025-11", "2025-12")

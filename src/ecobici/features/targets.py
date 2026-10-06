@@ -27,7 +27,11 @@ def load_snapshots(con: duckdb.DuckDBPyConnection, files: list[Path]) -> None:
                (is_installed AND is_returning) AS ok,
                num_docks_available = 0 AS is_full,
                num_docks_available AS docks,
-               capacity
+               num_bikes_available AS bikes,
+               num_docks_disabled AS docks_disabled,
+               capacity,
+               latitude AS lat,
+               longitude AS lon
         FROM read_parquet(?)
         """,
         [[str(f) for f in files]],

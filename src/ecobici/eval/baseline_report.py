@@ -42,11 +42,9 @@ def saturated_stations(con: duckdb.DuckDBPyConnection, horizon_min: int) -> list
 
 def validation_frame(con: duckdb.DuckDBPyConnection, pred: str) -> pl.DataFrame:
     cols = "sid, y, full_now, target_slot, weekend, " + ", ".join(MODELS)
-    return pl.from_arrow(
-        con.execute(
-            f"SELECT {cols} FROM {pred} WHERE month IN (SELECT unnest(?))", [list(VALIDATION)]
-        ).arrow()
-    )
+    return con.execute(
+        f"SELECT {cols} FROM {pred} WHERE month IN (SELECT unnest(?))", [list(VALIDATION)]
+    ).pl()
 
 
 def segments(df: pl.DataFrame, saturated: list[str]) -> dict[str, pl.DataFrame]:

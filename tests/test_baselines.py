@@ -22,7 +22,11 @@ def snapshots(path, sequence, start=T0, step_min=15, ok=None):
             "is_installed": True,
             "is_returning": o,
             "num_docks_available": 0 if f else 5,
+            "num_bikes_available": 20 if f else 15,
+            "num_docks_disabled": 0,
             "capacity": 20,
+            "latitude": 19.43,
+            "longitude": -99.2,
         }
         for i, (f, o) in enumerate(zip(sequence, ok, strict=True))
     ]
@@ -65,7 +69,7 @@ def test_baselines_fit_on_train_and_fall_back(tmp_path):
     seq = [False, True] * 20  # alternating: persistence is always wrong
     con = con_for(snapshots(tmp_path / "s.parquet", seq))
     baselines.predict(con, 15)
-    df = pl.from_arrow(con.execute("SELECT * FROM pred_15").arrow())
+    df = con.execute("SELECT * FROM pred_15").pl()
     assert df.filter(pl.col("full_now"))["p_persist"].unique().to_list() == [1.0]
     # Calibrated persistence learns that "full now" means "free next".
     assert df.filter(pl.col("full_now"))["p_persist_cal"].unique().to_list() == [0.0]
