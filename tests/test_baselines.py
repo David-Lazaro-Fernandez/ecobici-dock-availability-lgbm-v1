@@ -88,3 +88,21 @@ def test_metrics():
     assert metrics.skill(good["brier"], flat["brier"]) == pytest.approx(1 - 0.01 / 0.1875)
     rel = metrics.reliability(df, "good")
     assert rel["n"].sum() == 4 and rel["bin"].to_list() == [1, 9]
+
+
+def test_baselines_refit_on_other_months(tmp_path):
+    # March: alternating (full → free). April: persistent (full → full).
+    march = snapshots(tmp_path / "m.parquet", [False, True] * 20)
+    april = snapshots(
+        tmp_path / "a.parquet", [True] * 40, start=datetime(2025, 4, 8, 15, 0, tzinfo=UTC)
+    )
+    con = duckdb.connect()
+    targets.load_snapshots(con, [march, april])
+    targets.build_examples(con, 15)
+    baselines.predict(con, 15, refits={"_apr": ("2025-04",), "_both": ("2025-03", "2025-04")})
+    full = con.execute("SELECT * FROM pred_15").pl().filter(pl.col("full_now"))
+    assert full["p_persist_cal_apr"].unique().to_list() == [1.0]
+    # TRAIN holds both months: 19 full→free in March vs 39 full→full in April.
+    assert full["p_persist_cal"].unique().to_list() == full["p_persist_cal_both"].unique().to_list()
+    assert full["p_persist_cal"].unique().item() == pytest.approx(39 / 58)
+    assert {"p_hist", "p_hist_apr", "p_hist_both"} <= set(full.columns)

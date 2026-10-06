@@ -1,6 +1,6 @@
 # M6: LightGBM, primer modelo
 
-Fecha: 2026-10-06. Reproducible con `uv run python -m ecobici.eval.model_report`: 5.5 min para los 3 horizontes en 14 núcleos, con 18.4 GB de RAM como máximo y DuckDB limitado a 10 GB. **Determinista:** dos corridas dan exactamente los mismos números.
+Fecha: 2026-10-06. Reproducible con `uv run python -m ecobici.eval.model_report`: 6.7 min para los 3 horizontes en 14 núcleos (incluido el bootstrap), con 17.5 GB de RAM como máximo y DuckDB limitado a 10 GB. **Determinista:** dos corridas dan exactamente los mismos números.
 
 ## Protocolo
 
@@ -27,6 +27,34 @@ Fecha: 2026-10-06. Reproducible con `uv run python -m ecobici.eval.model_report`
 | 45 min | 0.1176 | 0.0934 | **+0.205** |
 
 En todos los cortes (todas las estaciones, pico, saturadas, saturadas + pico) y horizontes, el BSS va de **+0.17 a +0.22**.
+
+## Comparación justa e intervalos de confianza (2026-10-06)
+
+Pasos 1 y 2 de [`next_steps.md`](../next_steps.md). Mismo modelo, mismos datos; solo cambian las referencias y se agregan intervalos.
+
+**Líneas base con los mismos datos que el modelo.** El modelo usa VAL_FIT (2025-08, 2025-09) para la parada temprana y la calibración; las líneas base fijadas de antemano solo ven TRAIN. Se agregaron dos versiones de `p_persist_cal` y `p_hist`:
+- `_tvf`: reajustadas con TRAIN + VAL_FIT;
+- `_iso`: ajustadas con TRAIN y recalibradas con isotónica en VAL_FIT, el mismo paso que el modelo.
+
+La "referencia justa" es la mejor de las siete líneas base en cada corte. Mejora a la mejor original en **≤ 0.2 % de Brier**, y el BSS del modelo baja **como mucho 0.002**. En saturadas + pico no cambia (+0.216 / +0.218 / +0.205). **Casi todo el ~20 % viene del modelo**, no de ver datos más recientes.
+
+**Bootstrap por bloques** (`ecobici.eval.bootstrap`, 1,000 réplicas, IC 95 % por percentiles). Dos tipos de bloque:
+- **día** (66–92 bloques): conserva los choques de todo el sistema (lluvia, feriados);
+- **estación × día** (7 k–62 k bloques): supone estaciones independientes dentro de un día.
+
+Los intervalos por día salen **~2 veces más anchos**, así que la correlación entre estaciones en un mismo día es real. **Los intervalos por día son los de referencia.**
+
+BSS de `p_lgbm` en saturadas + pico, contra la referencia justa:
+
+| Horizonte | BSS | IC 95 % (días) | IC 95 % (estación × día) |
+| --- | --- | --- | --- |
+| 15 min | +0.216 | [+0.202, +0.230] | [+0.207, +0.225] |
+| 30 min | +0.218 | [+0.197, +0.236] | [+0.208, +0.228] |
+| 45 min | +0.205 | [+0.180, +0.227] | [+0.194, +0.217] |
+
+El límite inferior queda lejos de 0 y del +0.10 de la meta en todos los cortes y horizontes (el más bajo: +0.156, saturadas a 45 min).
+
+**Log loss** (saturadas + pico, modelo frente a la mejor línea base): 0.217 vs 0.342 a 15 min, 0.268 vs 0.408 a 30 min, 0.298 vs 0.437 a 45 min. Una reducción de ~35 %, mayor que la del Brier: la persistencia calibrada da probabilidades casi nulas a estaciones que sí se llenan, y el log loss lo castiga más.
 
 ## Metas
 
@@ -67,6 +95,20 @@ En todos los cortes (todas las estaciones, pico, saturadas, saturadas + pico) y 
 
 
 ## Calibración: lo que falta
+
+![Diagrama de confiabilidad de p_lgbm en saturadas + pico](figures/M6_reliability.png)
+
+Brecha de calibración de `p_lgbm` en saturadas + pico, con IC 95 %:
+
+| Horizonte | Brecha | IC 95 % (días) | IC 95 % (estación × día) | Réplicas ≤ 0.05 |
+| --- | --- | --- | --- | --- |
+| 15 min | 0.059 | [0.044, 0.085] | [0.046, 0.081] | 11 % |
+| 30 min | 0.047 | [0.039, 0.076] | [0.042, 0.068] | 26 % |
+| 45 min | 0.073 | [0.054, 0.107] | [0.059, 0.102] | 1 % |
+
+- **0.047 contra 0.059 no es una diferencia real:** los intervalos se traslapan casi por completo. El ✅ de 30 min no es robusto, porque solo una de cada cuatro réplicas cumple la meta. A 45 min falla con claridad.
+- La brecha es el máximo sobre los bins, así que el bootstrap la sesga hacia arriba y el intervalo es conservador. Aun así, la lectura no cambia.
+- **Lo que sí es real es el sesgo:** a 30 y 45 min, todos los bins entre 0.1 y 0.8 quedan por debajo de la diagonal, y sus intervalos no la tocan. A 15 min pasa lo mismo de 0.3 a 0.9; de 0.1 a 0.3 está bien calibrado. El modelo sobreestima de forma sistemática en este subgrupo, y eso justifica la calibración por subgrupo (paso 3).
 
 - **En todas las estaciones está casi perfecta:** ECE de 0.0004–0.0016, sin brecha relevante entre centro y periferia (V8 ✅).
 - **Dentro de saturadas + pico, el modelo sobreestima** de 3 a 7 puntos en los rangos intermedios (0.1–0.8). La meta de ±0.05 se cumple a 30 min (0.047) y falla a 15 min (0.059) y a 45 min (0.073).

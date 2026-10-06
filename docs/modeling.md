@@ -133,7 +133,7 @@ Una métrica global quedaría dominada por las estaciones que casi nunca se llen
 
 Las estaciones saturadas se definen con datos de TRAIN, para que el corte no dependa de lo que pasó en el periodo evaluado.
 
-### 5.4 Pruebas de software (79 tests, `uv run pytest`)
+### 5.4 Pruebas de software (91 tests, `uv run pytest`)
 
 Además de la evaluación estadística, cada pieza tiene pruebas con datos sintéticos donde la respuesta correcta se conoce de antemano. Las que protegen la validez del modelo:
 
@@ -148,6 +148,8 @@ Además de la evaluación estadística, cada pieza tiene pruebas con datos sint�
 | Modelo no reproducible | `test_lgbm.py`: dos entrenamientos dan predicciones idénticas; el orden de filas es estable |
 | Recalibración que mire el futuro | `test_lgbm.py`: la recalibración semanal solo usa semanas anteriores |
 | Métricas mal calculadas | `test_baselines.py::test_metrics`: Brier, BSS y calibración contra valores calculados a mano |
+| Intervalos demasiado estrechos | `test_bootstrap.py`: los bloques usan el día local; con un choque que mueve a todas las estaciones el mismo día, los bloques por día dan intervalos más anchos que estación × día |
+| Líneas base reajustadas con otros meses | `test_baselines.py::test_baselines_refit_on_other_months`: cada versión usa solo sus meses |
 | Fuente de paquetes | `test_package_index.py`: todas las dependencias vienen de PyPI |
 
 Estos tests encontraron bugs reales que habrían invalidado resultados:
@@ -184,6 +186,9 @@ Detalle completo en [M6](reports/M6_lgbm.md). Brier del caso del producto (`satu
 
 **Lectura:**
 - El modelo reduce el error ~20 % frente a la mejor alternativa simple en todos los cortes, más del doble de la meta.
+- **No viene de usar datos más recientes:** con las líneas base reajustadas en TRAIN + VAL_FIT, o recalibradas en VAL_FIT como el modelo, el BSS baja como mucho 0.002.
+- **No es ruido:** con bootstrap por bloques de días, el IC 95 % del BSS en saturadas + pico es [+0.20, +0.23] a 15 min, [+0.20, +0.24] a 30 min y [+0.18, +0.23] a 45 min.
+- **La calibración en saturadas + pico no cumple la meta de forma robusta en ningún horizonte.** El ✅ de 30 min (0.047, IC [0.039, 0.076]) no se distingue del ❌ de 15 min (0.059, IC [0.044, 0.085]). El sesgo hacia arriba sí es sistemático.
 - La mejora viene de corregir lo que las líneas base no ven: cuando una estación saturada **todavía no** está llena a las 9 h, la persistencia calibrada predice 2.6 % de que se llene en 30 min, y en la realidad pasa el 10.8 % ([M5](reports/M5_baselines.md)).
 
 ## 7. Limitaciones y pendientes

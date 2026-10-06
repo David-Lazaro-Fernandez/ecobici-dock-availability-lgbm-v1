@@ -16,6 +16,7 @@ collector = ["boto3>=1.35"]
 model = [
     "duckdb>=1.1",
     "lightgbm>=4.5",
+    "matplotlib>=3.9",
     "polars>=1.20",
     "pyarrow>=17",
     "scikit-learn>=1.5",
