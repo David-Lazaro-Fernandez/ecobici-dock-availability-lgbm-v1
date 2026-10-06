@@ -28,6 +28,16 @@ uv run ruff format --check .
 uv run pytest
 ```
 
+## Dev station viewer
+
+A Streamlit page to look at the live feed or local captures. It shows a map coloured by
+label, a filterable table, and one station's docks and bikes over time.
+
+```sh
+aws s3 sync s3://YOUR-BUCKET/raw raw     # optional: pull captures from the collector
+uv run streamlit run apps/station_viewer.py --server.address localhost
+```
+
 ## Layout
 
 ```

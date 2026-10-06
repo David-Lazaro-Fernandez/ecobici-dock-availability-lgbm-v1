@@ -20,6 +20,11 @@ model = [
     "pyarrow>=17",
     "scikit-learn>=1.5",
 ]
+# Dev-only station viewer (apps/station_viewer.py).
+viz = [
+    "pandas>=2.2",
+    "streamlit>=1.40",
+]
 
 [dependency-groups]
 dev = [
