@@ -11,3 +11,6 @@ data/
 raw/
 artifacts/
 .env
+
+# DuckDB spill files.
+.tmp/
