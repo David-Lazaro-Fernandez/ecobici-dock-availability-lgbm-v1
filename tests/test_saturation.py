@@ -54,3 +54,20 @@ def test_v6_only_walkable_neighbours_count(con):
     assert r["p_b_full_given_a"] == pytest.approx(4 / 6)
     assert r["p_all_neighbours_full"] == pytest.approx(4 / 6)
     assert "V6" in saturation.format_report(saturation.v1(con), r)
+
+
+def test_demand_weighted_weights_slots_by_typical_arrivals(con):
+    # Peak readings at 09:00/15/30/45 → slots 36..39. A full in all; B full at 36-37.
+    flow = pl.DataFrame(
+        {
+            "station_id": ["A", "B", "C"],
+            "slot": [36, 36, 36],
+            "weekend": [False, False, False],
+            "arrivals_mean": [3.0, 1.0, 4.0],
+        }
+    )
+    r = saturation.demand_weighted(con, flow)
+    assert r["weekday_peak"] == pytest.approx((3 * 1 + 1 * 1 + 4 * 0) / 8)
+    # Time-weighted over every peak slot: A 4/4, B 2/4, C 0/4.
+    assert r["weekday_peak_time_weighted"] == pytest.approx(6 / 12)
+    assert r["stations"] == 3

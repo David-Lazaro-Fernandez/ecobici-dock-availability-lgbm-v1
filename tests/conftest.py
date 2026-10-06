@@ -37,7 +37,8 @@ class FakeSession:
         self.responses = list(responses)
         self.calls = 0
 
-    def get(self, url, timeout, params=None):
+    def get(self, url, timeout, params=None, **kwargs):
+        self.last_kwargs = kwargs
         self.calls += 1
         item = self.responses.pop(0)
         if isinstance(item, Exception):
