@@ -4,6 +4,8 @@ ML model to predict whether you will end your ride and find parking at your dest
 
 - Product requirements: [`docs/PRD.md`](docs/PRD.md)
 - Engineering plan, review findings and decisions: [`docs/ENG_PLAN.md`](docs/ENG_PLAN.md)
+- How the model was built, justified and tested: [`docs/modeling.md`](docs/modeling.md)
+- Stage reports (M2–M6): [`docs/reports/`](docs/reports/)
 
 ## Setup
 
