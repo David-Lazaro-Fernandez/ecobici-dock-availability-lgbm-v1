@@ -37,7 +37,7 @@ class FakeSession:
         self.responses = list(responses)
         self.calls = 0
 
-    def get(self, url, timeout):
+    def get(self, url, timeout, params=None):
         self.calls += 1
         item = self.responses.pop(0)
         if isinstance(item, Exception):

@@ -20,6 +20,9 @@ STALE_AFTER_SECONDS = 30 * 60
 HORIZONS_MAXHALFORD_MIN = (15, 30, 45)
 HORIZONS_OWN_CAPTURE_MIN = (10, 15, 20, 30, 45)
 
+# Single Open-Meteo point near the Ecobici station centroid (ENG_PLAN decision 2).
+WEATHER_POINT = (19.41, -99.17)
+
 # Candidate stations and walking distance (RF2, finding 9).
 WALK_RADIUS_M = 500
 WALK_DETOUR_FACTOR = 1.3
