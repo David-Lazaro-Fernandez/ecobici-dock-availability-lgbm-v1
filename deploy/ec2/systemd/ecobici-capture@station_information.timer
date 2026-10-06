@@ -1,0 +1,10 @@
+[Unit]
+Description=Capture station_information and capacity once a day
+
+[Timer]
+OnCalendar=*-*-* 06:00:00 UTC
+OnBootSec=2min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
