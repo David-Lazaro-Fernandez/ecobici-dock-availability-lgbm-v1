@@ -1,0 +1,13 @@
+# One capture of the feed named by the instance (%i), e.g. ecobici-capture@station_status.
+[Unit]
+Description=Ecobici GBFS capture (%i)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ecobici
+EnvironmentFile=/etc/ecobici/capture.env
+WorkingDirectory=/opt/ecobici
+ExecStart=/opt/ecobici/.venv/bin/ecobici-capture --feed %i --sink ${ECOBICI_SINK} --cloudwatch-namespace ${ECOBICI_CW_NAMESPACE}
+TimeoutStartSec=90

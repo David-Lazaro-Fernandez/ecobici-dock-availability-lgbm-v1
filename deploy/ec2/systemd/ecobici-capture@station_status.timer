@@ -1,0 +1,10 @@
+[Unit]
+Description=Capture station_status every 2 minutes
+
+[Timer]
+OnCalendar=*:0/2:00
+AccuracySec=1s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

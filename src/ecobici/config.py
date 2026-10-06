@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 GBFS_ROOT = "https://gbfs.mex.lyftbikes.com/gbfs/es"
 STATION_STATUS_URL = f"{GBFS_ROOT}/station_status.json"
 STATION_INFORMATION_URL = f"{GBFS_ROOT}/station_information.json"
+SYSTEM_INFORMATION_URL = f"{GBFS_ROOT}/system_information.json"
 
 # Storage is always UTC; features use local time (no DST in CDMX since 2022).
 LOCAL_TZ = ZoneInfo("America/Mexico_City")

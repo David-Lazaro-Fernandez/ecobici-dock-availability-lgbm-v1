@@ -1,0 +1,10 @@
+[Unit]
+Description=Capture system_information once a day
+
+[Timer]
+OnCalendar=*-*-* 06:05:00 UTC
+OnBootSec=3min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
