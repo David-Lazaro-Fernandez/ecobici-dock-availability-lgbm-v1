@@ -96,7 +96,7 @@ Hay dos colchones de calendario: el mes de captura incluye Día de Muertos (2 no
                               eval/   (Brier, BSS, calibración, V1/V6/V9 simulador)
 ```
 
-- **Stack:** Python 3.11+, `uv`, `duckdb` + parquet, `polars` o `pandas`, `lightgbm`, `scikit-learn` (calibración y métricas), `pytest`.
+- **Stack:** Python 3.12, `uv`, `duckdb` + parquet, `polars` (pandas prohibido por `ruff`, regla TID251), `lightgbm`, `scikit-learn` (calibración y métricas), `pytest`.
 - **Host del colector (decidido):** EC2 pequeña (`t4g.nano` o `t4g.micro` alcanzan) con un timer de systemd. Guarda en S3 con un rol IAM restringido a `s3:PutObject` en el bucket. Una alarma de CloudWatch avisa si pasan más de 10 min sin escritura. GitHub Actions no sirve: su cron tiene mínimo de 5 min y no es puntual.
 - **Datos crudos inmutables.** Todo lo derivado se puede regenerar desde `raw/`.
 - **Datos personales:** no se ingieren edad ni género de los viajes (se descartan en la ingesta).

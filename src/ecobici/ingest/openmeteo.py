@@ -12,7 +12,7 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
-import pandas as pd
+import polars as pl
 import requests
 
 API = "https://historical-forecast-api.open-meteo.com/v1/forecast"
@@ -28,7 +28,7 @@ def fetch(
     longitude: float,
     session: requests.Session | None = None,
     chunk_days: int = 180,
-) -> pd.DataFrame:
+) -> pl.DataFrame:
     """Hourly forecasts in UTC between ``start`` and ``end`` inclusive."""
     session = session or requests.Session()
     frames = []
@@ -49,11 +49,17 @@ def fetch(
         )
         resp.raise_for_status()
         hourly = resp.json()["hourly"]
-        frames.append(pd.DataFrame(hourly))
+        frames.append(pl.DataFrame({k: hourly[k] for k in ("time", *VARIABLES)}))
         lo = hi + timedelta(days=1)
-    df = pd.concat(frames, ignore_index=True)
-    df["time"] = pd.to_datetime(df["time"], utc=True)
-    return df.rename(columns={"time": "time_utc"}).drop_duplicates("time_utc")
+    return (
+        pl.concat(frames)
+        .with_columns(
+            pl.col("time").str.to_datetime("%Y-%m-%dT%H:%M", time_zone="UTC"),
+            pl.col(VARIABLES).cast(pl.Float64),
+        )
+        .rename({"time": "time_utc"})
+        .unique("time_utc", keep="first", maintain_order=True)
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -68,8 +74,8 @@ def main(argv: list[str] | None = None) -> int:
     lat, lon = config.WEATHER_POINT
     df = fetch(args.start, args.end, lat, lon)
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(args.out, index=False)
-    missing = df[list(VARIABLES)].isna().sum().to_dict()
+    df.write_parquet(args.out)
+    missing = df.select(pl.col(VARIABLES).null_count()).row(0, named=True)
     print(
         f"{len(df)} hours, {df['time_utc'].min():%Y-%m-%d} → {df['time_utc'].max():%Y-%m-%d}, "
         f"missing {missing} → {args.out}"

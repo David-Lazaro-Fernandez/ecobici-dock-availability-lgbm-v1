@@ -2,26 +2,46 @@
 
 import gzip
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
-import pandas as pd
+import polars as pl
 import requests
 
 from ecobici import config
 from ecobici.collector.report import fetched_at
 from ecobici.labels import classify
 
-INFO_COLUMNS = ["station_id", "short_name", "name", "lat", "lon", "capacity"]
-STATUS_COLUMNS = [
-    "station_id",
-    "num_docks_available",
-    "num_docks_disabled",
-    "num_bikes_available",
-    "num_bikes_disabled",
-    "is_installed",
-    "is_returning",
-    "last_reported",
-]
+INFO_SCHEMA = {
+    "station_id": pl.String,
+    "short_name": pl.String,
+    "name": pl.String,
+    "lat": pl.Float64,
+    "lon": pl.Float64,
+    "capacity": pl.Int64,
+}
+STATUS_SCHEMA = {
+    "station_id": pl.String,
+    "num_docks_available": pl.Int64,
+    "num_docks_disabled": pl.Int64,
+    "num_bikes_available": pl.Int64,
+    "num_bikes_disabled": pl.Int64,
+    "is_installed": pl.Int64,
+    "is_returning": pl.Int64,
+    "last_reported": pl.Int64,
+}
+HISTORY_SCHEMA = {
+    "time": pl.Datetime("us", config.LOCAL_TZ.key),
+    "docks_available": pl.Int64,
+    "bikes_available": pl.Int64,
+    "label": pl.String,
+}
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    stations: pl.DataFrame
+    feed_updated: int  # epoch seconds of the station_status document
 
 
 def read_capture(path: Path) -> dict:
@@ -43,20 +63,24 @@ def latest_information(root: Path) -> dict | None:
     return read_capture(files[-1]) if files else None
 
 
-def snapshot_frame(information: dict, status: dict) -> pd.DataFrame:
+def _frame(records: list[dict], schema: dict) -> pl.DataFrame:
+    """Keep only the schema's columns; GBFS entries carry extra and sometimes missing keys."""
+    return pl.DataFrame([{k: r.get(k) for k in schema} for r in records], schema=schema)
+
+
+def snapshot_frame(information: dict, status: dict) -> Snapshot:
     """One row per station: location, capacity, current counts and label."""
-    info = pd.DataFrame(information["data"]["stations"]).reindex(columns=INFO_COLUMNS)
     feed_updated = int(status["last_updated"])
     stations = status["data"]["stations"]
-    st = pd.DataFrame(stations).reindex(columns=STATUS_COLUMNS)
-    st["label"] = [str(classify(s, feed_updated)) for s in stations]
-    st["minutes_since_report"] = (feed_updated - st["last_reported"]) / 60
-    df = info.merge(st, on="station_id", how="inner")
-    df.attrs["feed_updated"] = feed_updated  # epoch seconds; attrs must stay JSON-serialisable
-    return df
+    st = _frame(stations, STATUS_SCHEMA).with_columns(
+        label=pl.Series([str(classify(s, feed_updated)) for s in stations], dtype=pl.String),
+        minutes_since_report=(feed_updated - pl.col("last_reported")) / 60,
+    )
+    info = _frame(information["data"]["stations"], INFO_SCHEMA)
+    return Snapshot(info.join(st, on="station_id", how="inner"), feed_updated)
 
 
-def station_history(captures: list[Path], station_id: str) -> pd.DataFrame:
+def station_history(captures: list[Path], station_id: str) -> pl.DataFrame:
     """Docks and bikes over time for one station across local captures."""
     rows = []
     for path in captures:
@@ -73,4 +97,4 @@ def station_history(captures: list[Path], station_id: str) -> pd.DataFrame:
                     }
                 )
                 break
-    return pd.DataFrame(rows, columns=["time", "docks_available", "bikes_available", "label"])
+    return pl.DataFrame(rows, schema=HISTORY_SCHEMA)

@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 import altair as alt
-import pandas as pd
+import polars as pl
 import pydeck as pdk
 import streamlit as st
 
@@ -33,7 +33,7 @@ st.set_page_config(page_title="Ecobici station viewer", layout="wide")
 
 
 @st.cache_data(ttl=30, show_spinner="Fetching live feed…")
-def live_snapshot() -> pd.DataFrame:
+def live_snapshot() -> data.Snapshot:
     return data.snapshot_frame(
         data.fetch_live(config.STATION_INFORMATION_URL),
         data.fetch_live(config.STATION_STATUS_URL),
@@ -41,13 +41,13 @@ def live_snapshot() -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
-def local_snapshot(root: str, capture: str) -> pd.DataFrame:
+def local_snapshot(root: str, capture: str) -> data.Snapshot:
     info = data.latest_information(Path(root)) or data.fetch_live(config.STATION_INFORMATION_URL)
     return data.snapshot_frame(info, data.read_capture(Path(capture)))
 
 
 @st.cache_data(show_spinner="Reading captures…")
-def history(captures: tuple[str, ...], station_id: str) -> pd.DataFrame:
+def history(captures: tuple[str, ...], station_id: str) -> pl.DataFrame:
     return data.station_history([Path(c) for c in captures], station_id)
 
 
@@ -68,7 +68,7 @@ captures: list[Path] = []
 if source == "Live feed":
     if st.sidebar.button("Refresh"):
         live_snapshot.clear()
-    df = live_snapshot()
+    snap = live_snapshot()
 else:
     root = st.sidebar.text_input("Captures directory", "raw")
     captures = data.list_captures(Path(root))
@@ -82,10 +82,13 @@ else:
         value=len(captures) - 1,
         format_func=lambda i: f"{times[i]:%Y-%m-%d %H:%M}",
     )
-    df = local_snapshot(root, str(captures[idx]))
+    snap = local_snapshot(root, str(captures[idx]))
     st.sidebar.caption(
         f"{len(captures)} captures, {times[0]:%m-%d %H:%M} → {times[-1]:%m-%d %H:%M}"
     )
+
+df = snap.stations
+label_name = pl.col("label").replace_strict({k: n for k, (n, _) in LABEL_STYLE.items()})
 
 # --- Filters (one row, above the views) -------------------------------------
 f1, f2 = st.columns([2, 3])
@@ -96,34 +99,37 @@ labels = f1.multiselect(
     format_func=lambda k: LABEL_STYLE[k][0],
 )
 query = f2.text_input("Search station (name or code)")
-view = df[df["label"].isin(labels)]
+view = df.filter(pl.col("label").is_in(labels))
 if query:
     q = query.lower()
-    view = view[
-        view["name"].str.lower().str.contains(q, regex=False)
-        | view["short_name"].astype(str).str.contains(q, regex=False)
-    ]
+    view = view.filter(
+        pl.col("name").str.to_lowercase().str.contains(q, literal=True)
+        | pl.col("short_name").str.contains(q, literal=True)
+    )
 
 # --- Headline numbers --------------------------------------------------------
-updated = datetime.fromtimestamp(df.attrs["feed_updated"], config.LOCAL_TZ)
+updated = datetime.fromtimestamp(snap.feed_updated, config.LOCAL_TZ)
 st.caption(f"Feed updated {updated:%Y-%m-%d %H:%M:%S} (CDMX) · {len(df)} stations")
 cols = st.columns(len(LABEL_STYLE))
 for col, (key, (name, _)) in zip(cols, LABEL_STYLE.items(), strict=True):
-    n = int((df["label"] == key).sum())
+    n = df.filter(pl.col("label") == key).height
     col.metric(name, n, f"{n / len(df):.1%} of stations", delta_color="off")
 
 # --- Map ---------------------------------------------------------------------
-map_df = view.dropna(subset=["lat", "lon"]).copy()
-map_df["color"] = map_df["label"].map(lambda k: hex_to_rgb(LABEL_STYLE[k][1]))
-map_df["label_name"] = map_df["label"].map(lambda k: LABEL_STYLE[k][0])
-map_df["since"] = map_df["minutes_since_report"].round(0)
+colors = {k: hex_to_rgb(c) for k, (_, c) in LABEL_STYLE.items()}
+map_rows = [
+    {**row, "color": colors[row["label"]]}
+    for row in view.drop_nulls(["lat", "lon"])
+    .with_columns(label_name=label_name, since=pl.col("minutes_since_report").round(0))
+    .to_dicts()
+]
 st.markdown(legend(), unsafe_allow_html=True)
 st.pydeck_chart(
     pdk.Deck(
         layers=[
             pdk.Layer(
                 "ScatterplotLayer",
-                map_df,
+                map_rows,
                 get_position=["lon", "lat"],
                 get_fill_color="color",
                 get_radius=35,
@@ -136,7 +142,7 @@ st.pydeck_chart(
             )
         ],
         initial_view_state=pdk.ViewState(
-            latitude=float(df["lat"].mean()), longitude=float(df["lon"].mean()), zoom=11.5
+            latitude=df["lat"].mean(), longitude=df["lon"].mean(), zoom=11.5
         ),
         tooltip={
             "html": "<b>{name}</b><br/>{label_name}<br/>Free docks {num_docks_available}"
@@ -150,8 +156,9 @@ st.pydeck_chart(
 
 # --- Table -------------------------------------------------------------------
 st.subheader(f"Stations ({len(view)})")
-table = view.assign(label=view["label"].map(lambda k: LABEL_STYLE[k][0]))[
-    [
+table = (
+    view.with_columns(label=label_name)
+    .select(
         "short_name",
         "name",
         "label",
@@ -160,8 +167,9 @@ table = view.assign(label=view["label"].map(lambda k: LABEL_STYLE[k][0]))[
         "capacity",
         "num_docks_disabled",
         "minutes_since_report",
-    ]
-].sort_values("num_docks_available")
+    )
+    .sort("num_docks_available")
+)
 st.dataframe(
     table,
     hide_index=True,
@@ -184,23 +192,19 @@ if not captures:
     st.caption("Switch the source to **Local captures** to see a station over time.")
     st.stop()
 
-options = df.sort_values("short_name")
-pick = st.selectbox(
-    "Station",
-    options["station_id"],
-    format_func=lambda sid: "{} · {}".format(
-        *options.loc[options["station_id"] == sid, ["short_name", "name"]].iloc[0]
-    ),
-)
+station_names = {
+    r["station_id"]: f"{r['short_name']} · {r['name']}"
+    for r in df.sort("short_name").select("station_id", "short_name", "name").to_dicts()
+}
+pick = st.selectbox("Station", list(station_names), format_func=station_names.get)
 hist = history(tuple(str(c) for c in captures), pick)
-if hist.empty:
+if hist.is_empty():
     st.caption("This station does not appear in the captures.")
     st.stop()
 
-long = hist.melt(
-    id_vars=["time", "label"], value_vars=list(SERIES), var_name="series", value_name="count"
-)
-long["series"] = long["series"].map(lambda k: SERIES[k][0])
+long = hist.unpivot(
+    on=list(SERIES), index=["time", "label"], variable_name="series", value_name="count"
+).with_columns(pl.col("series").replace_strict({k: n for k, (n, _) in SERIES.items()}))
 hover = alt.selection_point(fields=["time"], nearest=True, on="pointerover", empty=False)
 base = alt.Chart(long).encode(
     x=alt.X("time:T", title=None),

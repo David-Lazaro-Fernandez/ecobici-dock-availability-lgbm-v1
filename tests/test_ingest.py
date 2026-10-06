@@ -1,6 +1,6 @@
 from datetime import UTC, date, datetime, timedelta
 
-import pandas as pd
+import polars as pl
 import pytest
 from conftest import FakeResponse, FakeSession
 
@@ -38,7 +38,7 @@ def write_month(root, start, gaps_min):
         t = t + timedelta(minutes=g)
         times.append(t)
     rows = [{"station_id": s, "committed_at_utc": ts} for ts in times for s in ("1", "2")]
-    pd.DataFrame(rows).to_parquet(root / f"{start:%Y-%m}.parquet")
+    pl.DataFrame(rows).write_parquet(root / f"{start:%Y-%m}.parquet")
 
 
 def test_month_diagnostics_counts_covered_time(tmp_path):
@@ -72,5 +72,5 @@ def test_openmeteo_fetch_chunks_and_parses_utc():
 
     assert session.calls == 2
     assert len(df) == 4
-    assert str(df["time_utc"].dt.tz) == "UTC"
-    assert list(df.columns) == ["time_utc", "temperature_2m", "precipitation"]
+    assert df.schema["time_utc"] == pl.Datetime("us", "UTC")
+    assert df.columns == ["time_utc", "temperature_2m", "precipitation"]

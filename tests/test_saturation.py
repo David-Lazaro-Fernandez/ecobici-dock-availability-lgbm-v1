@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-import pandas as pd
+import polars as pl
 import pytest
 
 from ecobici.eval import saturation
@@ -35,7 +35,7 @@ def con(tmp_path):
     for i, full in enumerate([{"A", "B"}, {"A", "B"}, {"A"}, {"A"}]):
         rows += snapshot(T0 + timedelta(minutes=15 * i), full)
     path = tmp_path / "2025-03.parquet"
-    pd.DataFrame(rows).to_parquet(path)
+    pl.DataFrame(rows).write_parquet(path)
     return saturation.connect([path])
 
 

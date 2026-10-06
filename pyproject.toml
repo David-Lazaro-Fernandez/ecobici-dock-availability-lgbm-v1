@@ -16,13 +16,13 @@ collector = ["boto3>=1.35"]
 model = [
     "duckdb>=1.1",
     "lightgbm>=4.5",
-    "pandas>=2.2",
+    "polars>=1.20",
     "pyarrow>=17",
     "scikit-learn>=1.5",
 ]
-# Dev-only station viewer (apps/station_viewer.py).
+# Dev-only station viewer (apps/station_viewer.py). Streamlit still pulls in pandas.
 viz = [
-    "pandas>=2.2",
+    "polars>=1.20",
     "streamlit>=1.40",
 ]
 
@@ -48,7 +48,10 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP"]
+select = ["E", "F", "I", "B", "UP", "TID251"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"pandas".msg = "Use polars (or duckdb) instead of pandas."
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
