@@ -2,7 +2,8 @@
 
 Answers the M1 exit question: is the capture continuous enough to rebuild the
 target? Reports minute coverage against the expected cadence, gaps, duplicate
-feed snapshots, and the label mix (available / full / unavailable / stale).
+feed snapshots, the label mix (available / full / unavailable / stale), and how long
+in-service stations go without reporting (to set the ``stale`` threshold).
 
 Sync from S3 first, e.g. ``aws s3 sync s3://bucket/raw/station_status raw/station_status``.
 """
@@ -22,6 +23,9 @@ from ecobici.labels import classify
 
 KEY_TS = re.compile(r"_(\d{8}T\d{6}Z)\.json\.gz$")
 
+# Upper bounds (minutes) of the silence buckets for in-service stations.
+SILENCE_BUCKETS = ((30, "< 30 min"), (60, "30-60 min"), (180, "1-3 h"), (1440, "3-24 h"))
+
 
 @dataclass
 class Report:
@@ -33,6 +37,7 @@ class Report:
     duplicate_snapshots: int = 0
     unreadable: int = 0
     labels: Counter = field(default_factory=Counter)
+    silence: Counter = field(default_factory=Counter)
 
     @property
     def coverage(self) -> float:
@@ -44,6 +49,14 @@ def fetched_at(path: Path) -> datetime:
     if not m:
         raise ValueError(f"not a capture file: {path}")
     return datetime.strptime(m.group(1), "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+
+
+def silence_bucket(station: dict, feed_last_updated: int) -> str:
+    last_reported = station.get("last_reported")
+    if last_reported is None:
+        return "never"
+    minutes = (feed_last_updated - last_reported) / 60
+    return next((name for bound, name in SILENCE_BUCKETS if minutes < bound), "> 1 day")
 
 
 def build_report(
@@ -78,6 +91,8 @@ def build_report(
         seen_updates.add(last_updated)
         for station in payload["data"]["stations"]:
             rep.labels[classify(station, last_updated)] += 1
+            if station.get("is_installed") and station.get("is_returning"):
+                rep.silence[silence_bucket(station, last_updated)] += 1
     return rep
 
 
@@ -85,6 +100,7 @@ def format_report(rep: Report) -> str:
     if not rep.n_files:
         return "No captures found."
     total = sum(rep.labels.values()) or 1
+    silent_total = sum(rep.silence.values()) or 1
     lines = [
         f"Window:     {rep.first:%Y-%m-%d %H:%M} → {rep.last:%Y-%m-%d %H:%M} UTC",
         f"Captures:   {rep.n_files} of {rep.expected} expected ({rep.coverage:.1%})",
@@ -97,6 +113,12 @@ def format_report(rep: Report) -> str:
         f"Unreadable files: {rep.unreadable}",
         "Station readings by label:",
         *(f"  {label:<12} {n:>9}  {n / total:6.2%}" for label, n in rep.labels.most_common()),
+        "In-service readings by time since the station last reported:",
+        *(
+            f"  {name:<12} {rep.silence[name]:>9}  {rep.silence[name] / silent_total:6.2%}"
+            for name in [*(n for _, n in SILENCE_BUCKETS), "> 1 day", "never"]
+            if rep.silence[name]
+        ),
     ]
     return "\n".join(lines)
 

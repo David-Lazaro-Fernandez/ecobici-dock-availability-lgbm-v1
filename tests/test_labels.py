@@ -1,7 +1,7 @@
 from conftest import station
 
 from ecobici.config import STALE_AFTER_SECONDS
-from ecobici.labels import StationState, classify
+from ecobici.labels import StationState, classify, is_recommendable
 
 NOW = 1_000_000
 
@@ -42,3 +42,15 @@ def test_missing_last_reported_is_stale():
     s = station("1")
     del s["last_reported"]
     assert classify(s, NOW) is StationState.STALE
+
+
+def test_quiet_station_within_threshold_is_not_stale():
+    # Stations report only on change: 45 min of silence is a quiet station, not a dead one.
+    assert classify(station("1", docks=0, last_reported=NOW - 45 * 60), NOW) is StationState.FULL
+
+
+def test_only_current_in_service_readings_are_recommendable():
+    assert is_recommendable(StationState.AVAILABLE)
+    assert is_recommendable(StationState.FULL)
+    assert not is_recommendable(StationState.STALE)
+    assert not is_recommendable(StationState.UNAVAILABLE)

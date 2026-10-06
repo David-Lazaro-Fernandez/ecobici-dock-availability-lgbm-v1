@@ -44,3 +44,20 @@ def test_report_skips_unreadable_files(tmp_path):
 
 def test_empty_report(tmp_path):
     assert format_report(build_report(tmp_path)) == "No captures found."
+
+
+def test_report_buckets_silence_of_in_service_stations(tmp_path):
+    lu = int(T0.timestamp())
+    stations = [
+        station("1", last_reported=lu),
+        station("2", last_reported=lu - 45 * 60),
+        station("3", last_reported=lu - 5 * 3600),
+        station("4", returning=0, last_reported=lu - 99 * 86400),
+    ]
+    write(tmp_path, T0, lu, stations)
+
+    rep = build_report(tmp_path)
+
+    assert rep.silence == {"< 30 min": 1, "30-60 min": 1, "3-24 h": 1}
+    assert rep.labels == {"available": 2, "stale": 1, "unavailable": 1}
+    assert "30-60 min" in format_report(rep)
