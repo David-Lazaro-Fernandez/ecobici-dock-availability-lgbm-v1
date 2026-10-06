@@ -85,15 +85,15 @@ Fecha: 2026-10-06. Reproducible con `uv run python -m ecobici.eval.baseline_repo
 - **El promedio histórico está mal calibrado en validación.** En `saturated_peak` predice ~0.35 donde se observa ~0.24, porque agosto a diciembre de 2025 fue menos saturado que el entrenamiento. Hay **deriva entre periodos**: el modelo necesita el estado actual y reciente, y la calibración debe ajustarse con datos recientes.
 - **El margen para el modelo está en "todavía no está llena, pero se va a llenar".** En `saturated_peak` a 30 min, cuando la estación no está llena, la persistencia calibrada predice 2.6 % y se observa **10.8 %**. Promedia todas las horas del día; LightGBM puede condicionar en la hora, los anclajes libres, la tendencia y las vecinas.
 
-## Metas numéricas propuestas para M6
+## Metas numéricas para M6 (aprobadas el 2026-10-06)
 
 El PRD dejaba las metas para después de medir las líneas base. La referencia es, en cada corte, **la mejor línea base de ese corte**.
 
-| Métrica | Meta propuesta |
+| Métrica | Meta |
 | --- | --- |
 | BSS contra la mejor línea base, en todos los cortes y horizontes | **> 0** |
 | BSS en `saturated_peak`, 30 min (el caso del producto) | **≥ 0.10**, es decir Brier ≤ 0.1085 |
 | Calibración en `saturated_peak`, bins con n ≥ 1,000 | \|observado − predicho\| ≤ 0.05 |
 | Brecha centro/periferia (V8) | Se mide en M6 con la misma calibración |
 
-Pendiente de aprobación del dueño del producto.
+Aprobadas por @Dave el 2026-10-06. La métrica de producto definitiva es V9 (M8): si BSS queda algo por debajo de 0.10, se decide después de ver su efecto en las recomendaciones.
