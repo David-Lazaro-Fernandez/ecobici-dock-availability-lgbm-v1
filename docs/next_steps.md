@@ -73,7 +73,7 @@ El horizonte es cuánto tiempo hacia adelante predice el modelo: del momento en 
 
 ### Después, una sola vez
 
-8. ✅ **Prueba final de 15, 30 y 45 min** (2026-10-07). Protocolo registrado y commit antes de correr (`4b2c0eb`), corrida única con `ecobici.eval.test_report`. **Cumple los tres criterios en los dos meses.** Ver [M6_test](reports/M6_test.md).
+8. ✅ **Prueba final de 15, 30 y 45 min** (2026-10-07). Protocolo registrado y commit antes de correr (`a226b54`), corrida única con `ecobici.eval.test_report`. **Cumple los tres criterios en los dos meses.** Ver [M6_test](reports/M6_test.md).
 9. **Prueba en datos reales:** el mismo modelo congelado sobre la captura propia, con al menos ~10 mañanas entre semana (~2 semanas).
    - **Reportar `p_lgbm` al lado de `p_lgbm_sub_roll`.** En la prueba final la calibración por subgrupo no ayudó, y aquí se decide si se queda.
    - **Evaluar también el modelo de estación vacía** (`artifacts/empty/`): es su única prueba fuera de muestra.

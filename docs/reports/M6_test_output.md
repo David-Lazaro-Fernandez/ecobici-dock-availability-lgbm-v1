@@ -1,6 +1,6 @@
 # M6: salida completa de la prueba final
 
-Generada el 2026-10-07 con `uv run python -m ecobici.eval.test_report` (commit 4b2c0eb), en su única corrida. Resumen e interpretación en [M6_test.md](M6_test.md).
+Generada el 2026-10-07 con `uv run python -m ecobici.eval.test_report` (commit a226b54), en su única corrida. Resumen e interpretación en [M6_test.md](M6_test.md).
 
 Estaciones que solo aparecen en los meses de prueba (sin filas): 2
 

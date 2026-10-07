@@ -45,7 +45,7 @@ uv run python -m ecobici.eval.test_report
 
 ## Resultados (2026-10-07)
 
-Corrida única, commit `4b2c0eb`. El booster, la isotónica y el Platt fijo coincidieron byte por byte con los congelados en los tres horizontes. Dos estaciones que solo aparecen en los meses de prueba quedaron fuera. Salida completa en [M6_test_output.md](M6_test_output.md).
+Corrida única, commit `a226b54` (antes `4b2c0eb`: la historia se reescribió el 2026-10-07 solo para quitar archivos temporales de DuckDB que se habían versionado por error; el contenido, el orden y las fechas de los commits no cambiaron). El booster, la isotónica y el Platt fijo coincidieron byte por byte con los congelados en los tres horizontes. Dos estaciones que solo aparecen en los meses de prueba quedaron fuera. Salida completa en [M6_test_output.md](M6_test_output.md).
 
 **Veredicto: cumple en los dos meses.** Todos los criterios se cumplen en el valor puntual. Con holgura en el BSS, pero **no en la calibración** a 30 y 45 min.
 
