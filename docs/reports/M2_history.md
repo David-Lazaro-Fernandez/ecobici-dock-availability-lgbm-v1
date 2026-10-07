@@ -80,7 +80,7 @@ Paso 4 de [`next_steps.md`](../next_steps.md). Solo se leyeron las **marcas de t
 
 - **Etiqueta:** con lecturas cada 12 min, la llegada a 15 y 30 min se lee 3 y 6 min antes, y la de 45, 3 min después. Las predicciones a 15 y 30 min se vuelven algo más fáciles para todos los modelos, y la de 45 algo más difícil. El BSS compara sobre las mismas filas y lo compensa en parte, pero **el Brier absoluto no se puede comparar con 2026-01**.
 - **Rezagos:** `docks_lag15` falta casi siempre y `docks_lag30` casi nunca. Cada patrón por sí solo aparece en entrenamiento, donde faltan ~55 % de las veces, pero la combinación es distinta. `docks_lag15` pesa ~2 % de la ganancia.
-- **Hallazgo aparte:** en los meses sanos, cada rezago falta ~55 % de las veces, porque la ventana [*t* − L − 7.5, *t* − L] mide la mitad de la cadencia. Una ventana centrada (± 7.5 min) los recuperaría casi todos. Cambiarla obliga a reentrenar, así que queda como mejora para después de la prueba final.
+- **Hallazgo aparte:** en los meses sanos, cada rezago falta ~55 % de las veces, porque la ventana [*t* − L − 7.5, *t* − L] mide la mitad de la cadencia. Una ventana centrada (± 7.5 min) los recupera casi todos, pero casi no mejora el modelo ([M6](M6_lgbm.md#experimento-rezagos-con-ventana-centrada-2026-10-07)).
 
 **Decisión:**
 - **2026-09 cuenta solo desde el 11** (`splits.TEST_FROM`, 00:00 hora local, con días completos para el bootstrap por días). Del 1 al 10 se excluye, como 2026-02 → 08. No se filtran huecos sueltos: el filtro por ejemplo (lectura a ≤ 7.5 min de *t* + h) ya los quita.

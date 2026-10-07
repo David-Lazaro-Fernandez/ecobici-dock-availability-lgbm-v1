@@ -149,3 +149,56 @@ def test_flow_window_wraps_past_midnight(tmp_path):
     mm.build(con, 30)
     (window,) = con.execute("SELECT flow_net_window FROM feat_30 WHERE t = ?", [start]).fetchone()
     assert window == pytest.approx(2.0 + 3.0)  # slots 95 and 0, not 94 or 1
+
+
+@pytest.mark.parametrize(
+    ("window", "expected"),
+    # Readings at 0, 17, 30 min (docks 9, 8, 7); at t = 30 the lag-15 target is 15.
+    # trailing: latest reading <= 15 is at 0, older than 15 + 7.5 → missing.
+    # centered: nearest within 15 ± 7.5 is the one at 17.
+    [("trailing", None), ("centered", 8)],
+)
+def test_lag_window_trailing_vs_centered(tmp_path, window, expected):
+    snaps = [
+        {
+            "station_id": "A",
+            "committed_at_utc": T0 + timedelta(minutes=m),
+            "is_installed": True,
+            "is_returning": True,
+            "num_docks_available": d,
+            "num_bikes_available": 20 - d,
+            "num_docks_disabled": 0,
+            "capacity": 20,
+            "latitude": 19.43,
+            "longitude": -99.2,
+        }
+        for m, d in ((0, 9), (17, 8), (30, 7), (45, 6))
+    ]
+    path = tmp_path / "2025-03.parquet"
+    pl.DataFrame(snaps).write_parquet(path)
+    con = duckdb.connect()
+    targets.load_snapshots(con, [path])
+    empty_flow = pl.DataFrame(
+        schema={
+            "station_id": pl.String,
+            "slot": pl.Int64,
+            "weekend": pl.Boolean,
+            "arrivals_mean": pl.Float64,
+            "departures_mean": pl.Float64,
+            "net_flow_mean": pl.Float64,
+        }
+    )
+    weather = pl.DataFrame({"time_utc": [T0], "temperature_2m": [15.0], "precipitation": [0.0]})
+    mm.prepare_shared(con, empty_flow, weather)
+    targets.build_examples(con, 15)
+    mm.build(con, 15, lag_window=window)
+    r = con.execute(
+        "SELECT docks_lag15, docks_delta15 FROM feat_15 WHERE t = ?", [T0 + timedelta(minutes=30)]
+    ).fetchone()
+    assert r[0] == expected
+    assert r[1] == (None if expected is None else 7 - expected)
+
+
+def test_lag_window_rejects_unknown(con):
+    with pytest.raises(ValueError):
+        mm.build(con, 30, lag_window="nearest")

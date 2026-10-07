@@ -184,6 +184,22 @@ La recalibración semanal global (`p_lgbm_recal`) no ayudaba porque mezclaba las
 - **2026-09:** el mes anterior (2026-08) está excluido por el scraper. La primera semana y media usa `p_lgbm_sub` y después la ventana se llena con septiembre mismo.
 - **Captura propia:** igual que 2026-09 en las primeras semanas.
 
+## Experimento: rezagos con ventana centrada (2026-10-07)
+
+En M2 se vio que cada rezago (estado de hace 15, 30 y 60 min) falta ~53 % de las veces, porque la ventana [*t* − L − 7.5, *t* − L] mide la mitad de la cadencia ([M2](M2_history.md#2026-09-en-detalle-2026-10-06)). Se reentrenó con la lectura más cercana a *t* − L dentro de ± 7.5 min (`uv run python -m ecobici.eval.model_report --lag-window centered`). Todo lo demás es igual, incluida la calibración por subgrupo.
+
+| VAL_REPORT | Actual (`trailing`) | Centrada |
+| --- | --- | --- |
+| Rezagos presentes | 45–49 % | 93–97 % |
+| Peso de `docks_lag15` | ~2 % | ~4 % |
+| Brier saturadas + pico, 15 / 30 / 45 min (`p_lgbm_sub_roll`) | 0.0704 / 0.0853 / 0.0925 | 0.0704 / 0.0852 / 0.0925 |
+| BSS saturadas + pico (referencia justa) | +0.219 / +0.222 / +0.213 | +0.219 / +0.222 / +0.214 |
+| Brecha de calibración, saturadas + pico (IC por días) | 0.028 / 0.029 / 0.032 (≤ 0.051) | 0.025 / 0.030 / 0.033 (≤ 0.051) |
+
+En todas las estaciones, el Brier baja como mucho 1.3 % y el BSS sube como mucho 0.003, muy por debajo del IC (± 0.02).
+
+**Decisión: el modelo congelado sigue con `trailing`.** El modelo aprovecha los rezagos recuperados (su peso se duplica), pero casi no aportan: `docks_now` ya dice casi todo. Cambiar ahora no compensa reabrir la validación. `--lag-window centered` queda como opción (el valor por omisión sigue siendo `trailing` y reproduce el modelo congelado byte por byte). Es la opción natural para la captura propia, con lecturas cada 2 min.
+
 ## Revisión de fuga de información
 
 - **Sin fuga:**

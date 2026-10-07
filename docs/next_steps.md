@@ -51,9 +51,9 @@ El horizonte es cuánto tiempo hacia adelante predice el modelo: del momento en 
    - **2026-01 es la prueba principal.** 2026-09 (~14 días hábiles, en temporada de lluvias) se reporta aparte.
 5. **Pipeline de evaluación sobre la captura.** GBFS JSON → las mismas 33 variables → predicciones → métricas. Probarlo solo en la ventana del 2026-10-06, 11:37–14:38 hora local (17:37–20:38 UTC). Esa ventana queda marcada como *dev* y fuera de la prueba final para siempre.
 
-### Después de la prueba final, si vale la pena
+### Probado y descartado
 
-- **Rezagos con ventana centrada.** En los meses sanos cada rezago falta ~55 % de las veces: la ventana [*t* − L − 7.5, *t* − L] mide la mitad de la cadencia. Con ± 7.5 min se recuperarían casi todos. Obliga a reentrenar, así que no antes de la prueba final ([M2](reports/M2_history.md#2026-09-en-detalle-2026-10-06)).
+- **Rezagos con ventana centrada** (2026-10-07). Recupera casi todos los rezagos (de ~47 % a ~95 %), pero en VAL_REPORT el BSS cambia ≤ 0.003 y la calibración no cambia. El modelo congelado sigue con `trailing`. Ver [M6](reports/M6_lgbm.md#experimento-rezagos-con-ventana-centrada-2026-10-07).
 
 ### Mientras corre la captura (2–4 semanas)
 

@@ -17,6 +17,11 @@ from ecobici.eval.splits import TRAIN
 NEIGHBOUR_RADIUS_M = 300  # PRD: neighbour occupancy "a unos 300 m"
 LAGS_MIN = (15, 30, 60)
 LAG_TOLERANCE_MIN = 7.5
+# How the reading for "L min ago" is chosen:
+# - trailing (frozen M6 model): the latest reading at or before t − L, if it is no
+#   older than t − L − 7.5. With a ~15 min jittery cadence this misses ~55 % of lags.
+# - centered: the reading nearest to t − L within ± 7.5 min (never t itself).
+LAG_WINDOWS = ("trailing", "centered")
 
 FEATURES = [
     # station identity and size
@@ -145,23 +150,45 @@ def prepare_shared(
     )
 
 
-def build(con: duckdb.DuckDBPyConnection, horizon_min: int, source: str | None = None) -> str:
+def _lag_sql(lag: int, window: str) -> tuple[list[str], str, str, str]:
+    """(joins, ok condition, docks expr, is_full expr) for the reading 'lag' min ago."""
+    tol = int(LAG_TOLERANCE_MIN * 60)
+    target = f"e.t - INTERVAL ({lag * 60}) SECOND"
+    p = f"l{lag}"
+    before = f"ASOF LEFT JOIN snap {p} ON {p}.sid = e.sid AND {p}.t <= {target}"
+    p_ok = f"({p}.t >= {target} - INTERVAL ({tol}) SECOND AND {p}.ok)"
+    if window == "trailing":
+        return [before], p_ok, f"{p}.docks", f"{p}.is_full"
+    n = f"n{lag}"
+    after = f"ASOF LEFT JOIN snap {n} ON {n}.sid = e.sid AND {n}.t >= {target}"
+    n_ok = f"({n}.t <= {target} + INTERVAL ({tol}) SECOND AND {n}.ok)"
+    # Nearest of the two; ties go to the earlier reading.
+    use_p = f"({p_ok} AND (NOT coalesce({n_ok}, false) OR {target} - {p}.t <= {n}.t - ({target})))"
+    ok = f"(coalesce({p_ok}, false) OR coalesce({n_ok}, false))"
+    pick = lambda col: f"CASE WHEN {use_p} THEN {p}.{col} ELSE {n}.{col} END"  # noqa: E731
+    return [before, after], ok, pick("docks"), pick("is_full")
+
+
+def build(
+    con: duckdb.DuckDBPyConnection,
+    horizon_min: int,
+    source: str | None = None,
+    lag_window: str = "trailing",
+) -> str:
     """Create ``feat_{h}``: the source's columns (``ex_{h}`` by default, or e.g.
-    ``pred_{h}`` to carry baseline predictions along) plus FEATURES."""
+    ``pred_{h}`` to carry baseline predictions along) plus FEATURES. ``lag_window``
+    picks how lagged readings are matched (LAG_WINDOWS)."""
+    if lag_window not in LAG_WINDOWS:
+        raise ValueError(f"lag_window must be one of {LAG_WINDOWS}")
     ex, out = source or f"ex_{horizon_min}", f"feat_{horizon_min}"
     lag_joins, lag_cols = [], []
     for lag in LAGS_MIN:
-        a = f"l{lag}"
-        max_gap = int((lag + LAG_TOLERANCE_MIN) * 60)
-        lag_joins.append(
-            f"ASOF LEFT JOIN snap {a} ON {a}.sid = e.sid "
-            f"AND {a}.t <= e.t - INTERVAL ({lag * 60}) SECOND"
-        )
-        ok = f"({a}.t >= e.t - INTERVAL ({max_gap}) SECOND AND {a}.ok)"
+        joins, ok, docks, full = _lag_sql(lag, lag_window)
+        lag_joins += joins
         lag_cols += [
-            f"CASE WHEN {ok} THEN {a}.docks END AS docks_lag{lag}",
-            f"CASE WHEN {ok} THEN e.docks_now - {a}.docks END AS docks_delta{lag}",
-            f"CASE WHEN {ok} THEN {a}.is_full::int END AS full_lag{lag}",
+            f"CASE WHEN {ok} THEN {docks} END AS docks_lag{lag}",
+            f"CASE WHEN {ok} THEN e.docks_now - {docks} END AS docks_delta{lag}",
+            f"CASE WHEN {ok} THEN {full}::int END AS full_lag{lag}",
         ]
     con.execute(
         f"""

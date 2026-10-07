@@ -115,13 +115,21 @@ def ece(df: pl.DataFrame, model: str) -> float:
     return float(((rel["observed"] - rel["predicted"]).abs() * rel["n"]).sum() / rel["n"].sum())
 
 
-def run_horizon(con, h: int, artifacts: Path) -> dict:
+def run_horizon(con, h: int, artifacts: Path, lag_window: str = "trailing") -> dict:
     log(f"h={h}: examples + baselines")
     targets.build_examples(con, h)
     baselines.predict(con, h, refits=REFIT)
     saturated = saturated_stations(con, h)
     log(f"h={h}: features")
-    feat = model_matrix.build(con, h, source=f"pred_{h}")
+    feat = model_matrix.build(con, h, source=f"pred_{h}", lag_window=lag_window)
+    present = con.execute(
+        "SELECT "
+        + ", ".join(f"avg((docks_lag{lag} IS NOT NULL)::int)" for lag in model_matrix.LAGS_MIN)
+        + f" FROM {feat}"
+    ).fetchone()
+    present = dict(zip(model_matrix.LAGS_MIN, present, strict=True))
+    shares = ", ".join(f"{lag} min {v:.1%}" for lag, v in present.items())
+    log(f"h={h}: lags present ({lag_window}): {shares}")
 
     X, y, _ = lgbm.matrix(con, feat, TRAIN)
     Xf, yf, _ = lgbm.matrix(con, feat, VAL_FIT)
@@ -265,6 +273,7 @@ def run_horizon(con, h: int, artifacts: Path) -> dict:
         "importance": lgbm.importance(model),
         "best_iteration": model.booster.best_iteration,
         "train_seconds": train_s,
+        "lags_present": present,
     }
 
 
@@ -353,6 +362,10 @@ def render(results: list[dict]) -> str:
         out.append(
             "\nImportancia (ganancia): " + ", ".join(f"{f} {g:.1%}" for f, g in r["importance"])
         )
+        out.append(
+            "\nRezagos presentes: "
+            + ", ".join(f"{lag} min {v:.1%}" for lag, v in r["lags_present"].items())
+        )
     return "\n".join(out)
 
 
@@ -423,6 +436,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--horizons", type=int, nargs="+", default=list(HORIZONS))
     parser.add_argument("--duckdb-memory", default="10GB")
     parser.add_argument(
+        "--lag-window",
+        choices=model_matrix.LAG_WINDOWS,
+        default="trailing",
+        help="trailing is the frozen M6 model; centered is an experiment",
+    )
+    parser.add_argument(
         "--figure", type=Path, default=Path("docs/reports/figures/M6_reliability.png")
     )
     args = parser.parse_args(argv)
@@ -440,7 +459,7 @@ def main(argv: list[str] | None = None) -> int:
 
     results = []
     for h in args.horizons:
-        results.append(run_horizon(con, h, args.artifacts))
+        results.append(run_horizon(con, h, args.artifacts, args.lag_window))
         log(f"h={h}: done")
     print(render(results))
     plot_reliability(results, args.figure)
