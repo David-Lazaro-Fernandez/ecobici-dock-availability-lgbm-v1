@@ -4,6 +4,18 @@ The target is the station's state at the first snapshot within ±``tolerance`` o
 t + h (M2: cadence ~15 min, so 7.5 min keeps it inside one slot). Readings where the
 station is out of service at either end are dropped: "full" must never stand in for
 an outage. Built in DuckDB; one row per example.
+
+``target`` picks the state being predicted, and every "full" column then holds it:
+
+- ``full`` (M6, the frozen model): no free dock, so a returning bike cannot dock. In
+  service = installed and accepting returns.
+- ``empty``: no bike to take. In service = installed only: in MaxHalford, ``is_renting``
+  is false on almost every empty reading (it tracks "no bikes", not an outage), so
+  filtering on it would drop the very cases to predict.
+
+Column and feature names keep "full" (``is_full``, ``full_now``, ``full_lag15``,
+``nb_full_frac``, ``st_full_rate``…) because they are baked into the frozen booster;
+for ``empty`` they mean the empty state.
 """
 
 from pathlib import Path
@@ -13,19 +25,26 @@ import duckdb
 from ecobici import config
 
 TOLERANCE_MIN = 7.5
+TARGETS = {
+    # (in service, target state)
+    "full": ("(is_installed AND is_returning)", "num_docks_available = 0"),
+    "empty": ("is_installed", "num_bikes_available = 0"),
+}
 
 
-def load_snapshots(con: duckdb.DuckDBPyConnection, files: list[Path]) -> None:
-    """Table ``snap``: one row per (station, snapshot) with state and local calendar."""
+def load_snapshots(con: duckdb.DuckDBPyConnection, files: list[Path], target: str = "full") -> None:
+    """Table ``snap``: one row per (station, snapshot) with state and local calendar.
+    ``is_full`` and ``ok`` follow ``target`` (see the module docstring)."""
+    ok, state = TARGETS[target]
     con.execute(f"SET TimeZone='{config.LOCAL_TZ.key}'")
     con.execute(
-        """
+        f"""
         CREATE OR REPLACE TABLE snap AS
         SELECT station_id AS sid,
                committed_at_utc AS t,
                strftime(committed_at_utc, '%Y-%m') AS month,
-               (is_installed AND is_returning) AS ok,
-               num_docks_available = 0 AS is_full,
+               {ok} AS ok,
+               {state} AS is_full,
                num_docks_available AS docks,
                num_bikes_available AS bikes,
                num_docks_disabled AS docks_disabled,
@@ -34,7 +53,7 @@ def load_snapshots(con: duckdb.DuckDBPyConnection, files: list[Path]) -> None:
                longitude AS lon,
                -- The file a row came from (UTC month), so a table can be fitted on
                -- the same files whatever else is loaded.
-               regexp_extract(filename, '(\d{4}-\d{2})\.parquet$', 1) AS file_month
+               regexp_extract(filename, '(\\d{{4}}-\\d{{2}})\\.parquet$', 1) AS file_month
         FROM read_parquet(?, filename = true)
         """,
         [[str(f) for f in files]],

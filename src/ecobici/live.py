@@ -79,10 +79,13 @@ def model_files(root: Path = maxhalford.DEFAULT_DIR) -> list[Path]:
     return [f for m in MODEL_FILES if (f := root / f"{m}.parquet").exists()]
 
 
-def saturated_by_horizon(files: list[Path], horizons=HORIZONS) -> dict[int, list[str]]:
-    """M6's saturated stations per horizon, recomputed from the TRAIN months (same SQL)."""
+def saturated_by_horizon(
+    files: list[Path], horizons=HORIZONS, target: str = "full"
+) -> dict[int, list[str]]:
+    """M6's saturated stations per horizon (for ``empty``: often drained at the peak),
+    recomputed from the TRAIN months (same SQL)."""
     con = duckdb.connect()
-    targets.load_snapshots(con, [f for f in files if f.stem in TRAIN])
+    targets.load_snapshots(con, [f for f in files if f.stem in TRAIN], target=target)
     out = {}
     for h in horizons:
         targets.build_examples(con, h)
@@ -185,6 +188,7 @@ def predict(
     saturated: dict[int, list[str]],
     frozen: dict[int, Frozen],
     duckdb_memory: str = "6GB",
+    target: str = "full",
 ) -> pl.DataFrame:
     """P(full at t + h) for every in-service station at the latest capture t.
 
@@ -199,7 +203,7 @@ def predict(
         # The name keeps it out of MODEL_FILES, so it never feeds the station list.
         live = Path(tmp) / f"live_{at:%Y-%m}.parquet"
         capture_rows(captures, information).write_parquet(live)
-        targets.load_snapshots(con, [*history_files, live])
+        targets.load_snapshots(con, [*history_files, live], target=target)
     model_matrix.prepare_shared(con, flow, weather, station_files=MODEL_FILES)
     month = at.astimezone(config.LOCAL_TZ).strftime("%Y-%m")
 

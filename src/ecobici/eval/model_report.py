@@ -242,7 +242,7 @@ def _months(p: Period) -> list[str]:
     """Local months touched by a period (CDMX is UTC−6 all year)."""
     lo = (p.start - np.timedelta64(6, "h")).astype("datetime64[M]")
     hi = (p.end - np.timedelta64(6, "h") - np.timedelta64(1, "s")).astype("datetime64[M]")
-    return [str(m) for m in np.arange(lo, hi + 1)]
+    return [str(m) for m in np.arange(lo, hi + np.timedelta64(1, "M"))]
 
 
 def _check_frozen(fresh: Path, frozen: Path, h: int) -> None:
@@ -503,7 +503,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--trips", type=Path, default=trip_ingest.DEFAULT_DIR)
     parser.add_argument("--weather", type=Path, default=openmeteo.DEFAULT_PATH)
     parser.add_argument("--raw", type=Path, default=Path("raw"))
-    parser.add_argument("--artifacts", type=Path, default=Path("artifacts"))
+    parser.add_argument(
+        "--target",
+        choices=list(targets.TARGETS),
+        default="full",
+        help="full: no free dock (the frozen M6 model); empty: no bike to take",
+    )
+    parser.add_argument("--artifacts", type=Path, help="default: artifacts/[empty/]")
     parser.add_argument("--horizons", type=int, nargs="+", default=list(HORIZONS))
     parser.add_argument("--duckdb-memory", default="10GB")
     parser.add_argument(
@@ -512,10 +518,12 @@ def main(argv: list[str] | None = None) -> int:
         default="trailing",
         help="trailing is the frozen M6 model; centered is an experiment",
     )
-    parser.add_argument(
-        "--figure", type=Path, default=Path("docs/reports/figures/M6_reliability.png")
-    )
+    parser.add_argument("--figure", type=Path, help="default: M6_reliability[_empty].png")
     args = parser.parse_args(argv)
+    empty = args.target == "empty"
+    args.artifacts = args.artifacts or Path("artifacts/empty" if empty else "artifacts")
+    figure = "M6_reliability_empty.png" if empty else "M6_reliability.png"
+    args.figure = args.figure or Path("docs/reports/figures") / figure
 
     months = [*TRAIN, *VALIDATION]  # test months stay unread
     files = [args.dir / f"{m}.parquet" for m in months if (args.dir / f"{m}.parquet").exists()]
@@ -525,14 +533,15 @@ def main(argv: list[str] | None = None) -> int:
     spill.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(config={"memory_limit": args.duckdb_memory, "temp_directory": str(spill)})
     log("loading snapshots, flows, weather")
-    targets.load_snapshots(con, files)
+    targets.load_snapshots(con, files, target=args.target)
     model_matrix.prepare_shared(con, trip_flow(args.trips, args.raw), pl.read_parquet(args.weather))
 
     results = []
     for h in args.horizons:
         results.append(run_horizon(con, h, args.artifacts, args.lag_window))
         log(f"h={h}: done")
-    print(render(results))
+    title = "Resultados (validación, 2025-10 → 2025-12)"
+    print(render(results, title=f"{title}, objetivo: sin bicis" if empty else title))
     plot_reliability(results, args.figure)
     frozen_ok = all(ok for r in results for m, _, _, ok in r["checks"] if m == FROZEN)
     return 0 if frozen_ok else 2
