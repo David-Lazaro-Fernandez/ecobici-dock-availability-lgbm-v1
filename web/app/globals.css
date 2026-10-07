@@ -1,0 +1,755 @@
+/* Layout on the skeleton of a-donde-ir (stage, dock, card, search bar, suggestions, options menu), in this project's
+   own neutral look: ink on paper, one accent (the start), and a one-hue sequential ramp for P(free dock). The ramp and
+   accent come from the validated chart palette (each step >= 2:1 on the light map). The basemap is light, so the page
+   is light-only. */
+
+:root {
+  color-scheme: light;
+  --ink: #0b0b0b;
+  --muted: #52514e;
+  --line: #e4e3df;
+  --paper: #ffffff;
+  --bg: #f6f6f4;
+  --soft: #eaf1fb; /* hover and focus wash */
+  --ink-10: rgba(11, 11, 11, 0.1);
+  --ink-30: rgba(11, 11, 11, 0.3);
+  --accent: #eb6834; /* the start and the bike pickup */
+  --accent-ink: #a8431a; /* accent for text: 4.5:1 on paper */
+  --dot: #b9b8b2; /* stations outside the trip */
+  --no-data: #c3c2b7;
+  --free-0: #86b6ef; /* < 50 % */
+  --free-1: #3987e5; /* 50–80 % */
+  --free-2: #1c5cab; /* 80–95 % */
+  --free-3: #0d366b; /* >= 95 % */
+  --error: #b42318;
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --bar: 64px;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+p {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--free-1);
+  outline-offset: 2px;
+}
+
+.muted {
+  display: block;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 400;
+}
+
+/* Top bar: brand and live status. The map starts under it. */
+
+.topbar {
+  position: fixed;
+  z-index: 10;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--bar);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 24px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+
+.topbar__brand {
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.topbar__status {
+  font-size: 0.82rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topbar__status.is-old {
+  color: var(--accent);
+}
+
+.topbar__status.is-error {
+  color: var(--error);
+}
+
+/* Stage: the map fills it; without a start, a veil and the title cover it and the bar sits in the middle. */
+
+.stage {
+  position: relative;
+  height: 100svh;
+  min-height: 560px;
+  overflow: hidden;
+  background: var(--paper);
+}
+
+.stage__map {
+  position: absolute;
+  inset: var(--bar) 0 0 0;
+  z-index: 0;
+}
+
+.stage__mapbox {
+  width: 100%;
+  height: 100%;
+}
+
+.stage__glass {
+  position: absolute;
+  inset: var(--bar) 0 0 0;
+  z-index: 1;
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(8px) saturate(0.6);
+  transition: opacity 0.6s var(--ease-out);
+}
+
+.stage.is-located .stage__glass {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.stage__title {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  top: calc(50% - 20px);
+  transform: translate(-50%, calc(-100% - 56px));
+  width: min(90%, 900px);
+  text-align: center;
+  font-size: clamp(2rem, 4.6vw, 3.2rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+}
+
+.stage__hint {
+  margin-top: 14px;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.notice {
+  padding: 24px;
+  color: var(--muted);
+}
+
+/* Dock: the search bar with its menu, the trip ends and the plan line. Slides to the foot once there is a start. */
+
+.dock {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  top: 50%;
+  width: min(880px, calc(100% - 32px));
+  transform: translate(-50%, -30%);
+  transition:
+    top 0.6s var(--ease-out),
+    transform 0.6s var(--ease-out);
+}
+
+.stage.is-located .dock {
+  top: 100%;
+  transform: translate(-50%, calc(-100% - 24px));
+}
+
+.dock__ends {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.end {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 14px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  text-align: left;
+}
+
+.end.is-on {
+  border-color: var(--ink);
+}
+
+.end__text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.9rem;
+}
+
+.end__text small {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.dot {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.dot--start {
+  background: var(--accent);
+}
+
+.dot--goal {
+  border: 3px solid var(--ink);
+}
+
+.dock__context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 8px 8px 8px 16px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.pill {
+  flex: none;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.pill:hover {
+  background: #2a2a28;
+}
+
+/* Search bar: options · text · my location · search. */
+
+.ask-box {
+  position: relative;
+}
+
+.ask {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 8px 8px 10px;
+  background: var(--paper);
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+}
+
+.ask:focus-within {
+  outline: 3px solid var(--soft);
+}
+
+.ask__icon,
+.ask__send {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+}
+
+.ask__icon svg,
+.ask__send svg,
+.ask__locate svg {
+  width: 22px;
+  height: 22px;
+}
+
+.ask__icon:hover,
+.ask__icon.is-on {
+  background: var(--soft);
+}
+
+.ask__input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 1.05rem;
+  color: var(--ink);
+  border: 0;
+  background: transparent;
+  padding: 10px 4px;
+  outline: none;
+  text-overflow: ellipsis;
+}
+
+.ask__input::placeholder {
+  color: var(--ink-30);
+}
+
+.ask__locate {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.ask__locate:hover {
+  color: var(--ink);
+  background: var(--soft);
+}
+
+.ask__send {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.ask__send:hover {
+  background: #2a2a28;
+}
+
+.ask__send:disabled {
+  background: var(--ink-10);
+  color: var(--muted);
+  cursor: default;
+}
+
+/* Suggestions open down with the bar in the middle and up with the bar at the foot. */
+
+.suggest {
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.suggest--down {
+  top: calc(100% + 8px);
+  bottom: auto;
+}
+
+.suggest__item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 6px;
+  text-align: left;
+  transition: background 0.2s var(--ease-out);
+}
+
+.suggest__item.is-active {
+  background: var(--bg);
+}
+
+.suggest__icon {
+  flex: none;
+  display: grid;
+  color: var(--muted);
+}
+
+.suggest__icon svg {
+  width: 21px;
+  height: 21px;
+}
+
+.suggest__text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+
+.suggest__text strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* Options menu: opens up from the bar. */
+
+.menu {
+  position: absolute;
+  z-index: 5;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  padding: 6px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  transition:
+    opacity 0.3s ease-in-out,
+    transform 0.3s ease-in-out,
+    visibility 0.3s ease-in-out;
+}
+
+.stage:not(.is-located) .menu {
+  top: calc(100% + 8px);
+  bottom: auto;
+}
+
+.menu:not(.is-open) {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(8px);
+}
+
+.menu__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 10px 14px;
+}
+
+.menu__label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.menu__label svg {
+  width: 21px;
+  height: 21px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.88rem;
+}
+
+.chip:hover {
+  border-color: var(--ink-30);
+}
+
+.chip.is-on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+
+/* Card: where to drop the bike, top left under the map credit. */
+
+.card {
+  position: absolute;
+  z-index: 3;
+  top: calc(var(--bar) + 52px);
+  left: 24px;
+  width: min(var(--card-width), calc(100% - 48px));
+  max-height: calc(100% - var(--bar) - 52px - 230px);
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+
+.icon-btn:hover {
+  background: var(--bg);
+}
+
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.card__pickup {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 16px;
+  font-size: 0.88rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.card__pickup .dot {
+  margin-top: 4px;
+}
+
+.card__warn {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--accent-ink);
+}
+
+.code {
+  font-size: 0.75em;
+  font-weight: 500;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.card__pick {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.card__pick.is-best {
+  background: var(--soft);
+}
+
+.card__rank {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--free-2);
+  color: var(--paper);
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+
+.card__pick-body {
+  min-width: 0;
+}
+
+.card__chance {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.card__list {
+  list-style: none;
+  margin: 0;
+  padding: 0 16px;
+  overflow-y: auto;
+}
+
+.card__list li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+
+.card__list li:last-child {
+  border-bottom: 0;
+}
+
+.card__list li.is-muted {
+  color: var(--muted);
+}
+
+.card__name {
+  min-width: 0;
+}
+
+.card__skeleton {
+  grid-template-columns: 1fr 1fr 48px !important;
+}
+
+.card__skeleton span {
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, rgba(11, 11, 11, 0.05) 0%, var(--ink-10) 50%, rgba(11, 11, 11, 0.05) 100%) 0 0 / 200% 100%;
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.card__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.card__legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.swatch {
+  display: inline-block;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid var(--paper);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.swatch--0 {
+  background: var(--free-0);
+}
+.swatch--1 {
+  background: var(--free-1);
+}
+.swatch--2 {
+  background: var(--free-2);
+}
+.swatch--3 {
+  background: var(--free-3);
+}
+.swatch--none {
+  background: var(--no-data);
+}
+
+.maplibregl-popup-content {
+  font-family: var(--font);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  border-radius: 8px;
+  padding: 10px 28px 10px 12px;
+}
+
+/* Phone: the map runs under the top bar, the card takes the width, the locate button keeps only its icon, and the
+   options menu is a sheet from the foot over an ink veil. */
+@media (max-width: 700px) {
+  .topbar {
+    padding: 0 16px;
+  }
+
+  .topbar__status {
+    max-width: 55%;
+  }
+
+  .stage .maplibregl-ctrl-top-left,
+  .stage .maplibregl-ctrl-top-right {
+    top: 8px;
+  }
+
+  .card {
+    top: calc(var(--bar) + 48px);
+    left: 12px;
+    width: calc(100% - 24px);
+    max-height: 38%;
+  }
+
+  .dock__context {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+  }
+
+  .ask__locate span {
+    display: none;
+  }
+
+  .menu__scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 4;
+    background: var(--ink-30);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease-in-out, visibility 0.3s ease-in-out;
+  }
+
+  .menu__scrim.is-open {
+    opacity: 1;
+    visibility: visible;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dock,
+  .stage__glass,
+  .menu,
+  .menu__scrim {
+    transition: none;
+  }
+
+  .card__skeleton span {
+    animation: none;
+  }
+}
