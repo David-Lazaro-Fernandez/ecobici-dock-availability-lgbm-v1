@@ -1,10 +1,10 @@
-"""HTTP API for the web app (``web/``): live station predictions and trip plans.
+"""The HTTP API for the web app (``web/``): live station predictions and trip plans.
 
     uv run --extra api --extra model uvicorn ecobici.api:app --port 8000
 
-Docs at http://localhost:8000/docs. Read-only, GET only, CORS for ECOBICI_API_ORIGINS
-(comma-separated, default the Next dev server). The model, S3 fetch and predictions
-live in ``ecobici.serve.LiveService``; this module only shapes requests and responses.
+Interactive docs: http://localhost:8000/docs. GET only. CORS allows the origins in
+ECOBICI_API_ORIGINS (comma-separated; default: the Next dev server). The logic is in
+``ecobici.serve.LiveService``. This module only reads requests and writes responses.
 """
 
 import os
@@ -36,9 +36,9 @@ class Station(BaseModel):
     docks: int | None
     bikes: int | None
     state: str  # available | full | unavailable | stale
-    # P(full) at 15 / 30 / 45 min, keyed by minutes; null when not predicted.
+    # P(full) at 15, 30 and 45 min, keyed by minutes. Null if not predicted.
     p_full: dict[str, float] | None
-    # P(no bike) at 15 min, keyed by minutes; null without the empty-station model.
+    # P(no bike) at 15 min, keyed by minutes. Null without the empty-station model.
     p_empty: dict[str, float] | None = None
 
 
@@ -52,23 +52,23 @@ class StationsResponse(BaseModel):
 class Pickup(Station):
     walk_m: float
     walk_min: float
-    # P(no bike left when you get there): 0 at the start station itself.
+    # P(no bike left on arrival). 0 at the start station.
     p_empty_at_arrival: float | None
-    # Walk + P(no bike) × failure cost + the best drop-off's expected minutes.
+    # Walk + P(no bike) × failure cost + expected minutes of the best drop-off.
     total_min: float | None
 
 
 class Candidate(Station):
-    rank: int | None  # 1 = best; null when not recommendable (out of service or stale)
+    rank: int | None  # 1 = best. Null if not recommendable (out of service or stale).
     recommendable: bool
-    walk_m: float  # to the destination
+    walk_m: float  # To the destination.
     walk_min: float
     ride_min: float
     ride_source: str
     arrive_at: datetime
     p_full_at_arrival: float | None
     p_free: float | None
-    expected_min: float | None  # from the pickup: ride + walk + P(full) × failure cost
+    expected_min: float | None  # From the pickup: ride + walk + P(full) × failure cost.
     outside_horizons: bool
 
 
@@ -78,10 +78,10 @@ class PlanResponse(BaseModel):
     radius_m: float
     failure_min: float
     pickup: Pickup
-    # The pickups compared, best total first (the first one is `pickup`).
+    # The compared pickups, lowest total first. The first one is `pickup`.
     pickup_options: list[Pickup]
-    # The start station asked for, when it had no bike to take (empty, out of service or
-    # not reporting) and the pickup moved to the nearest station with one.
+    # The start station asked for, if it had no bike to take. Then `pickup` is a station
+    # nearby.
     requested: Station | None
     candidates: list[Candidate]
 
@@ -133,8 +133,7 @@ def make_app(service: LiveService | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # Warm up in the background: loading the model takes ~20 s, and /health
-        # should answer meanwhile.
+        # Load the model (~20 s) in the background, so /health answers at once.
         if service is None:
             threading.Thread(target=svc.current, daemon=True).start()
         yield

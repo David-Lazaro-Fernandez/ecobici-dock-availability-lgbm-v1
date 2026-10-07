@@ -1,8 +1,8 @@
-"""Address search for the trip planner (PRD RF1: start or destination as coordinates).
+"""Address search for the trip planner (PRD RF1), with OpenStreetMap Nominatim.
 
-Uses OpenStreetMap's Nominatim, limited to a box around the Ecobici service area.
-Its usage policy asks for an identifying User-Agent, at most one request per second
-and cached results: the app only calls it when an address is typed, and caches it.
+The search is limited to a box around the Ecobici stations. The Nominatim usage policy
+requires a User-Agent that identifies the app, one request per second or less, and
+cached results.
 """
 
 from dataclasses import dataclass
@@ -11,7 +11,7 @@ import requests
 
 NOMINATIM = "https://nominatim.openstreetmap.org/search"
 USER_AGENT = "ecobici-dock-availability-dev/0.1 (local dev viewer)"
-MARGIN_DEG = 0.02  # ~2 km around the outermost stations
+MARGIN_DEG = 0.02  # ~2 km around the outermost stations.
 
 
 @dataclass(frozen=True)

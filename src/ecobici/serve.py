@@ -1,11 +1,11 @@
-"""Live service behind the API (ecobici.api) and the dev viewer: latest captures from
-S3, the frozen model's predictions for them, and trip plans.
+"""The live service for the API and the dev viewer: recent captures from S3, the
+predictions of the frozen models, and trip plans.
 
-One instance per process. It is thread-safe: FastAPI runs sync endpoints in a thread
-pool, so concurrent requests share one S3 fetch and one prediction per capture.
+Use one instance per process. It is thread-safe: concurrent requests share one S3 fetch
+and one prediction per capture.
 
-AWS access comes from the standard boto3 chain: the ``aws login`` session locally
-(``botocore[crt]``), or an instance role when deployed. No keys are stored.
+AWS access uses the standard boto3 chain: the ``aws login`` session on a laptop
+(``botocore[crt]``), or the instance role on AWS. No keys are stored.
 """
 
 import threading
@@ -24,17 +24,17 @@ from ecobici.ingest import captures as s3
 from ecobici.ingest import trips as trip_ingest
 from ecobici.recommender import plan as rp
 
-S3_EVERY = timedelta(seconds=60)  # captures arrive every 2 min
-S3_WINDOW = live.LOOKBACK + timedelta(minutes=5)  # what the lags need, with margin
-INFO_WINDOW = timedelta(days=2)  # station_information is captured daily at 06:00 UTC
+S3_EVERY = timedelta(seconds=60)  # Captures arrive every 2 min.
+S3_WINDOW = live.LOOKBACK + timedelta(minutes=5)
+INFO_WINDOW = timedelta(days=2)  # station_information is captured once a day, at 06:00 UTC.
 WEATHER_EVERY = timedelta(minutes=30)
 RIDE_HISTORY = timedelta(days=365)
-EMPTY_ARTIFACTS = Path("artifacts/empty")  # model_report --target empty --horizons 15
+EMPTY_ARTIFACTS = Path("artifacts/empty")  # From: model_report --target empty --horizons 15
 
 
 @dataclass(frozen=True)
 class Live:
-    """Every station at one capture, with its predictions (null when not predicted)."""
+    """All stations at one capture, with their predictions (null if not predicted)."""
 
     captured_at: datetime
     stations: pl.DataFrame
@@ -64,7 +64,7 @@ class LiveService:
                     "saturated": live.saturated_by_horizon(files),
                     "flow": trip_flow(trip_ingest.DEFAULT_DIR, self.raw),
                 }
-                # The empty-station model (P(no bike) at 15 min), if it has been trained.
+                # Optional: the empty-station model exists only after its training run.
                 h = (rp.EMPTY_HORIZON,)
                 if (EMPTY_ARTIFACTS / f"lgbm_{h[0]}.txt").exists():
                     self._model["empty"] = {
@@ -93,14 +93,14 @@ class LiveService:
 
     @property
     def last_capture(self) -> datetime | None:
-        """Capture time of the latest prediction computed, if any (never blocks)."""
+        """The capture time of the last computed prediction, or None. Does not block."""
         cached = self._live
         return cached[1].captured_at if cached else None
 
     # --- Refreshed ---------------------------------------------------------------
     def refresh(self, force: bool = False) -> None:
-        """Fetch the recent captures from S3, at most once per S3_EVERY. On failure
-        ``s3_error`` says why and the service keeps using what ``raw/`` has."""
+        """Get the recent captures from S3, at most once per S3_EVERY. If this fails,
+        ``s3_error`` tells why and the service uses the captures in ``raw/``."""
         if not self.use_s3:
             return
         with self._lock:
@@ -113,13 +113,13 @@ class LiveService:
                 s3.download_recent(bucket, "station_status", now - S3_WINDOW, self.raw)
                 s3.download_recent(bucket, "station_information", now - INFO_WINDOW, self.raw)
                 self.s3_error = None
-            except SystemExit as e:  # bucket_from_env
+            except SystemExit as e:  # From bucket_from_env.
                 self.s3_error = str(e)
             except Exception as e:  # noqa: BLE001 - any AWS or network error
                 self.s3_error = f"S3 fetch failed: {e}"
 
     def current(self) -> Live:
-        """Predictions for the latest capture, computed once per capture."""
+        """The predictions for the last capture. They are computed once per capture."""
         self.refresh()
         captures = gbfs.list_captures(self.raw)
         if not captures:
@@ -172,8 +172,8 @@ class LiveService:
         radius_m: float = 500,
         failure_min: float = 7.5,
     ) -> dict:
-        """A trip plan from a point (or a station) to a point. Raises LookupError when
-        there is no capture, no start station or no bike near the start."""
+        """Plan a trip from a point or a station to a point. Raise LookupError if there
+        is no capture, if the station is unknown, or if no bike is near the start."""
         now = self.current()
         df = now.stations
         requested = None
@@ -187,15 +187,12 @@ class LiveService:
                     walk_m=pl.lit(0.0), walk_min=pl.lit(0.0), p_empty=pl.lit(0.0)
                 )
             else:
-                # No bike to take there right now: look for one nearby.
                 requested = row
                 options = rp.pickup_options(df, (row["lat"], row["lon"]))
         else:
             options = rp.pickup_options(df, start)
         if options.is_empty():
             raise LookupError("no station with a bike near the start")
-        # Each pickup with its best drop-off: walk + P(no bike left) × failure cost +
-        # ride + walk + P(full) × failure cost. The lowest total wins.
         scored = []
         for opt in options.to_dicts():
             res = rp.plan(

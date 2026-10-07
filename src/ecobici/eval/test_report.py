@@ -1,18 +1,19 @@
-"""Final test (next_steps.md, step 8): the frozen M6 model on the test months, once.
+"""Final test (next_steps.md, step 8): the frozen M6 model on the test months. Run it
+once.
 
     uv run python -m ecobici.eval.test_report > docs/reports/M6_test_output.md
 
-The protocol and pass criteria are registered in docs/reports/M6_test.md before the
-first run. Nothing here may be tuned after seeing its output.
+docs/reports/M6_test.md registers the protocol and the pass criteria. Do not tune
+anything after the run.
 
-- Same model as M6: retrained deterministically (TRAIN, early stopping and
-  calibration on VAL_FIT), then checked byte for byte against the frozen artifacts
-  before anything is scored. The station list is pinned to the M6 files, so stations
-  that only exist in the test months get no rows.
-- 2026-01 is the main test. 2026-09 counts from ``splits.TEST_FROM`` and is reported
-  apart: its 12-min cadence reads the 15 / 30 / 45 min labels at 12 / 24 / 48 min.
-- Rolling recalibrations see only the past: for 2026-01, VAL_REPORT; for 2026-09,
-  nothing before the 11th, so the static maps carry its first weeks.
+- The model is trained again (training is deterministic). Before any score, its
+  artifacts must be byte-identical to the frozen ones. The station list comes from the
+  M6 files: stations that exist only in the test months are excluded.
+- 2026-01 is the main test. 2026-09 starts at ``splits.TEST_FROM`` and is reported
+  separately: with its 12-min cadence, the 15, 30 and 45-min labels are read at 12, 24
+  and 48 min.
+- The rolling recalibrations use only the past: VAL_REPORT for 2026-01. 2026-09 has no
+  history before the 11th, so it starts with the static maps.
 """
 
 import argparse
@@ -30,7 +31,7 @@ from ecobici.features import model_matrix, targets
 from ecobici.ingest import maxhalford, openmeteo
 from ecobici.ingest import trips as trip_ingest
 
-UTC_OFFSET = np.timedelta64(6, "h")  # CDMX is UTC−6 all year since 2022
+UTC_OFFSET = np.timedelta64(6, "h")  # CDMX is UTC−6 all year since 2022.
 
 
 def local_midnight(day: str) -> np.datetime64:
@@ -57,8 +58,8 @@ def final_periods() -> tuple[mr.Period, ...]:
 
 
 def fallback_share(report: pl.DataFrame, saturated: list[str]) -> float:
-    """Share of saturated_peak rows scored by the static Platt instead of a weekly fit
-    (the fallback returns exactly the static map's value)."""
+    """Share of saturated_peak rows calibrated by the static Platt map, not a weekly fit.
+    The fallback gives exactly the static value, so equal values mark it."""
     sp = report.filter(is_saturated_peak(saturated))
     return float((sp["p_lgbm_sub_roll"] == sp["p_lgbm_sub"]).mean()) if sp.height else np.nan
 

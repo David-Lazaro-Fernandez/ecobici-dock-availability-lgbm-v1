@@ -57,8 +57,8 @@ def _client(client):
 
 
 def _fetch(client, bucket: str, objects: list[RemoteObject], root: str, dest: Path) -> list[Path]:
-    """Download each object missing locally (or with another size); return the newly
-    written paths. Keys keep their layout under ``dest``, without the ``root`` prefix."""
+    """Download the objects that are not in ``dest`` or have a different size. Return
+    the new paths. The key layout stays the same, without the ``root`` prefix."""
     written = []
     for o in objects:
         path = dest / o.key.removeprefix(f"{root}/")
@@ -100,11 +100,11 @@ def download_recent(
     until: datetime | None = None,
     client=None,
 ) -> tuple[int, int]:
-    """Fetch one feed's captures taken in [since, until] (default: up to now).
-
-    Lists only the UTC day folders that window touches (``<feed>/YYYY/MM/DD/``), so it
-    stays fast however long the collector has been running. Returns
+    """Get the captures of one feed from ``since`` to ``until`` (default: now). Return
     ``(downloaded, in_window)``.
+
+    Only the UTC day folders of the window are listed, so the time does not grow with
+    the capture history.
     """
     client = _client(client)
     root = prefix.strip("/")

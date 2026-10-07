@@ -1,17 +1,15 @@
-"""Dev-only live predictions: the frozen M6 model on the latest S3 capture.
+"""Dev-only page: live predictions of the frozen M6 model on the last S3 capture.
 
-    eval "$(aws configure export-credentials --format env)"   # boto3 + `aws login`
-    uv run streamlit run apps/predictions.py
+    uv run --extra api streamlit run apps/predictions.py   # Uses the `aws login` session.
 
-On every load (at most once a minute) the page fetches the captures of the last ~70 min
-from S3 into ``raw/`` (``captures.download_recent``: only today's folders are listed),
-then predicts, for every in-service station at the latest capture, the probability
-that it is full 15 / 30 / 45 min later (ecobici.live), and:
+On each load (at most once a minute), the page gets the last ~75 min of captures from S3
+(``captures.download_recent``). Two tabs:
 
-- **Plan a trip**: from a start station to a destination, the stations within walking
-  distance of the destination, each with P(free dock) at its own arrival time and the
-  PRD's expected-time score (ecobici.recommender.plan);
-- **All stations**: every station's P(full) at a chosen horizon.
+- **Plan a trip**: the stations near the destination, with P(free dock) at the arrival
+  time of each one and the PRD expected-time score (``ecobici.recommender.plan``).
+- **All stations**: P(full) of each station at one horizon.
+
+The web app in ``web/`` replaces this page.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -32,16 +30,16 @@ from ecobici.recommender import geocode
 from ecobici.recommender import plan as rp
 
 RAW = Path("raw")
-# Sequential blue ramp (one hue, light → dark), each step >= 2:1 on the light map.
+# One-hue ramp, light → dark. Each step has a contrast of 2:1 or more on the light map.
 RAMP = ["#86b6ef", "#3987e5", "#1c5cab", "#0d366b"]
 FULL_BANDS = [(0.05, "< 5 %"), (0.20, "5–20 %"), (0.50, "20–50 %"), (1.01, "≥ 50 %")]
 FREE_BANDS = [(0.50, "< 50 %"), (0.80, "50–80 %"), (0.95, "80–95 %"), (1.01, "≥ 95 %")]
 NO_PREDICTION = ("No prediction (out of service or new)", "#c3c2b7")
 ORIGIN, DESTINATION = "#eb6834", "#0b0b0b"
 STATE = {"available": "Available", "full": "Full", "unavailable": "Unavailable", "stale": "Stale"}
-STALE_AFTER_MIN = 10  # warn when the latest capture is older than this
+STALE_AFTER_MIN = 10  # Warn if the last capture is older.
 RIDE_HISTORY = timedelta(days=365)
-S3_WINDOW = live.LOOKBACK + timedelta(minutes=5)  # what the lags need, with margin
+S3_WINDOW = live.LOOKBACK + timedelta(minutes=5)
 DEFAULT_START = "Paseo de la Reforma 222, Juárez"
 
 st.set_page_config(page_title="Ecobici live predictions", layout="wide")
@@ -78,7 +76,7 @@ def information() -> dict:
 
 @st.cache_data(show_spinner="Predicting…", max_entries=4)
 def predictions(latest: str) -> pl.DataFrame:
-    """Keyed by the latest capture's name, so a new capture means a new prediction."""
+    """The cache key is the last capture name: a new capture gives a new prediction."""
     m = model()
     caps = live.recent_captures(RAW, fetched_at(Path(latest)))
     return live.predict(
@@ -88,23 +86,20 @@ def predictions(latest: str) -> pl.DataFrame:
 
 @st.cache_data(ttl=60, show_spinner="Fetching the latest captures from S3…")
 def fetch_recent() -> tuple[int, str | None]:
-    """New captures fetched from S3 for the prediction window, and an error message if
-    S3 could not be reached (the page then runs on what ``raw/`` already has)."""
+    """The number of new captures from S3, and an error message if S3 failed. If S3
+    fails, the page uses the captures in ``raw/``."""
     now = datetime.now(UTC)
     try:
         bucket = s3.bucket_from_env()
         new, _ = s3.download_recent(bucket, "station_status", now - S3_WINDOW, RAW)
-        # station_information is captured once a day (06:00 UTC).
+        # station_information is captured once a day, at 06:00 UTC.
         info_new, _ = s3.download_recent(
             bucket, "station_information", now - timedelta(days=2), RAW
         )
-    except SystemExit as e:  # bucket_from_env
+    except SystemExit as e:  # From bucket_from_env.
         return 0, str(e)
-    except Exception as e:  # noqa: BLE001 - surface any AWS error in the page
-        return 0, (
-            f"S3 fetch failed: {e}\n\nIf you use `aws login`, start Streamlit after "
-            '`eval "$(aws configure export-credentials --format env)"`.'
-        )
+    except Exception as e:  # noqa: BLE001 - Show any AWS error on the page.
+        return 0, (f"S3 fetch failed: {e}\n\nRun `aws login` again if the session expired.")
     if info_new:
         information.clear()
     return new, None
@@ -142,8 +137,8 @@ def find(query: str, box: str) -> list[geocode.Place]:
 
 
 def pick_point(col, role: str, key: str, box: str, ids: list[str], default_mode: str):
-    """A station or a typed address. Returns lat, lon, label and station_id (None for
-    an address), or None until there is something to use."""
+    """A station or a typed address: lat, lon, label and station_id (None for an
+    address). None until the user picks something."""
     modes = ["Address", "Station"]
     mode = col.radio(
         role, modes, index=modes.index(default_mode), key=f"{key}_mode", horizontal=True
@@ -169,7 +164,7 @@ def pick_point(col, role: str, key: str, box: str, ids: list[str], default_mode:
         return None
     try:
         places = find(q, box)
-    except Exception as e:  # noqa: BLE001 - show any lookup error in the page
+    except Exception as e:  # noqa: BLE001 - Show any lookup error on the page.
         col.error(f"Address lookup failed: {e}")
         return None
     if not places:
@@ -227,8 +222,7 @@ trip_tab, all_tab = st.tabs(["Plan a trip", "All stations"])
 with trip_tab:
     ids = list(names)
     box = geocode.viewbox(df["lat"].to_list(), df["lon"].to_list())
-    # Defaults that show something: start at an address, end at the likeliest-full
-    # station right now.
+    # Defaults: start at an address, end at the station most likely to be full now.
     if "dest_station" not in st.session_state:
         busiest = df.sort("p_full_15", descending=True, nulls_last=True).row(0, named=True)
         st.session_state.dest_station = busiest["station_id"]
@@ -255,7 +249,6 @@ with trip_tab:
     if start is None or goal is None:
         st.stop()
 
-    # The bike: the start station itself, or the nearest one with a bike.
     if start["station_id"]:
         orig = df.filter(pl.col("station_id") == start["station_id"]).row(0, named=True)
         to_bike = None
@@ -309,7 +302,7 @@ with trip_tab:
 
     # --- Map -------------------------------------------------------------------
     def tip(row: dict, role: str, **kw) -> dict:
-        """Every layer shares one tooltip, so every point carries the same fields."""
+        """All layers share one tooltip, so each point needs the same fields."""
         return {
             "role": role,
             "short_name": row.get("short_name", ""),
@@ -367,7 +360,7 @@ with trip_tab:
         )
 
     layers = [
-        # The walking radius, drawn as straight-line distance (radius / detour).
+        # The walking radius as a straight-line distance: radius / DETOUR.
         pdk.Layer(
             "ScatterplotLayer",
             [{"lon": goal["lon"], "lat": goal["lat"]}],
@@ -527,7 +520,7 @@ with all_tab:
                 "color": rgb(color),
                 "state": STATE.get(r["label"], r["label"]),
                 **{f"fmt_{h}": fmt_pct(r[f"p_full_{h}"]) for h in HORIZONS},
-                "order": -1.0 if r[p] is None else r[p],  # likelier-full on top
+                "order": -1.0 if r[p] is None else r[p],  # Draw the likeliest full on top.
             }
         )
     rows.sort(key=lambda r: r["order"])

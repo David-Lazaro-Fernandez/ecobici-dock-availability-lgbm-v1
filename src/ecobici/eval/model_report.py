@@ -58,11 +58,11 @@ ALL_BASELINES = [*BASELINES, *REFIT_BASELINES, *ISO_BASELINES]
 LGBM = ["p_lgbm_raw", "p_lgbm", "p_lgbm_recal", "p_lgbm_sub", "p_lgbm_sub_roll"]
 MODELS = [*ALL_BASELINES, *LGBM]
 PRIMARY = "p_lgbm"
-# Chosen on 2026-10-06 after VAL_REPORT, before reading any test month.
+# Chosen on 2026-10-06, after VAL_REPORT and before any test month.
 FROZEN = "p_lgbm_sub_roll"
 CHECKED = (PRIMARY, "p_lgbm_recal", "p_lgbm_sub", FROZEN)
-# A rolling subgroup window needs about a week and a half of weekday peaks (~19 k
-# saturated_peak rows a month); shorter windows use the static VAL_FIT map.
+# ~1.5 weeks of weekday peaks (~19 k saturated_peak rows a month). Shorter windows use
+# the static VAL_FIT map.
 SUB_MIN_ROWS = 5000
 N_BOOT = 1000
 REPORT_START = np.datetime64("2025-10-01T06:00")  # 2025-10-01 00:00 CDMX, in UTC
@@ -118,8 +118,9 @@ def ece(df: pl.DataFrame, model: str) -> float:
 
 @dataclass(frozen=True)
 class Period:
-    """A scored period, [start, end) in naive UTC. ``report=False`` periods are only
-    history for the rolling recalibrations (e.g. VAL_REPORT before a test month)."""
+    """A scored period, [start, end) in naive UTC. A period with ``report=False`` is
+    only history for the rolling recalibrations (for example VAL_REPORT before a test
+    month)."""
 
     name: str
     start: np.datetime64
@@ -138,11 +139,11 @@ def fit_predict(
     lag_window: str = "trailing",
     expect: Path | None = None,
 ) -> tuple[dict[str, pl.DataFrame], list[str], dict]:
-    """Train on TRAIN, calibrate on VAL_FIT, score every period. Returns one frame per
-    reported period with every model column, the saturated stations and model info.
+    """Train on TRAIN, calibrate on VAL_FIT, and score each period. Return one frame per
+    reported period with all model columns, the saturated stations, and model info.
 
-    ``expect``: a directory with the frozen artifacts. The fresh ones must match them
-    byte for byte, checked before anything is scored, or this raises.
+    ``expect``: a directory with the frozen artifacts. Before any score, the new
+    artifacts must be byte-identical to them. If not, raise RuntimeError.
     """
     log(f"h={h}: examples + baselines")
     targets.build_examples(con, h)
@@ -178,10 +179,10 @@ def fit_predict(
     t = times.to_numpy()
     in_fit = meta["month"].is_in(VAL_FIT).to_numpy()
     in_period = {p.name: (t >= p.start) & (t < p.end) for p in periods}
-    # Rows outside VAL_FIT and the periods (e.g. 2026-09-01..10) are never history.
+    # Rows outside VAL_FIT and the periods (for example 2026-09-01 to 10) are never history.
     usable = in_fit | np.logical_or.reduce(list(in_period.values()))
     p_global = model.calibrator.predict(raw)
-    # Subgroup recalibration on top of the global map, saturated_peak rows only.
+    # The subgroup map applies after the global map, on saturated_peak rows only.
     sub = meta.select(is_saturated_peak(saturated)).to_series().to_numpy()
     static = lgbm.Platt.fit(p_global[sub & in_fit], yr[sub & in_fit])
     static.save(artifacts / f"platt_sub_{h}.json")
@@ -189,8 +190,8 @@ def fit_predict(
         _check_frozen(artifacts, expect, h)
 
     def rolling(src: np.ndarray, mask: np.ndarray, period: Period, **kw) -> np.ndarray:
-        """Weekly recalibration of ``src`` on ``mask`` rows over ``period``; history is
-        the usable rows before it."""
+        """Weekly recalibration of ``src`` on the ``mask`` rows of ``period``. The history
+        is the usable rows before the period."""
         rows = mask & usable & (t < period.end)
         out = np.full(len(raw), np.nan)
         out[rows] = lgbm.rolling_recalibrate(
@@ -204,7 +205,7 @@ def fit_predict(
         if not p.report:
             continue
         here = in_period[p.name]
-        # With too little history (2026-09's first week), the VAL_FIT map.
+        # With too little history (the first week of 2026-09), use the VAL_FIT map.
         recal = rolling(raw, everywhere, p, fallback=model.calibrator)
         roll_sub = rolling(
             p_global, sub, p, fit=lgbm.Platt.fit, min_rows=SUB_MIN_ROWS, fallback=static
@@ -212,7 +213,7 @@ def fit_predict(
         p_sub, p_sub_roll = p_global.copy(), p_global.copy()
         p_sub[sub] = static.predict(p_global[sub])
         p_sub_roll[sub] = roll_sub[sub]
-        # Baselines get the model's own calibration step: isotonic on VAL_FIT.
+        # The baselines get the calibration step of the model: isotonic on VAL_FIT.
         iso = {
             f"{b}_iso": IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip")
             .fit(meta[b].to_numpy()[in_fit], yr[in_fit])
