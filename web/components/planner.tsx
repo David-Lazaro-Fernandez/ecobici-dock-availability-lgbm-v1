@@ -323,7 +323,21 @@ export function Planner() {
                     <span className="muted">
                       {result.pickup.walk_m > 0 ? `${meters(result.pickup.walk_m)} walk (${minutes(result.pickup.walk_min)}) · ` : ''}
                       {result.pickup.bikes ?? '—'} bikes now
+                      {result.pickup.walk_m > 0 && result.pickup.p_empty_at_arrival != null &&
+                        ` · ${pct(1 - result.pickup.p_empty_at_arrival)} chance a bike is still there when you arrive`}
                     </span>
+                    {result.pickup_options.length > 1 && (
+                      <span className="card__alts">
+                        Also near you:{' '}
+                        {result.pickup_options.slice(1).map((o, i) => (
+                          <span key={o.id}>
+                            {i > 0 && ' · '}
+                            {shortName(o.name)} <Code code={o.code} /> ({meters(o.walk_m)}, {o.bikes} bikes
+                            {o.p_empty_at_arrival != null && `, ${pct(1 - o.p_empty_at_arrival)} still there`})
+                          </span>
+                        ))}
+                      </span>
+                    )}
                   </p>
                 </div>
                 {ranked.slice(0, 2).map((c) => (

@@ -76,6 +76,7 @@ function stationPopup(s: Station, c?: Candidate) {
   if (c && c.p_free != null) lines.push(`Free dock when you arrive: <b>${pct(c.p_free)}</b> (ride ${Math.round(c.ride_min)} min)`);
   else if (s.p_full) lines.push(`Full in 15 / 30 / 45 min: ${pct(s.p_full['15'])} / ${pct(s.p_full['30'])} / ${pct(s.p_full['45'])}`);
   else lines.push('No prediction');
+  if (s.p_empty?.['15'] != null) lines.push(`No bike to take in 15 min: ${pct(s.p_empty['15'])}`);
   return lines.join('<br/>');
 }
 

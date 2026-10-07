@@ -98,3 +98,32 @@ def test_nearest_with_bike_skips_empty_and_out_of_service():
     assert r["walk_m"] == pytest.approx(2.5 * 111.2 * 1.3, rel=0.01)
     assert r["walk_min"] == pytest.approx(r["walk_m"] / 80)
     assert rp.nearest_with_bike(df.with_columns(num_bikes_available=pl.lit(0)), DEST) is None
+
+
+def test_p_empty_rises_with_the_walk_and_caps_at_the_model_horizon():
+    got = pl.select(
+        [rp.p_empty_at(pl.lit(0.6), pl.lit(m)).alias(str(m)) for m in (0, 5, 15, 30)]
+    ).row(0)
+    assert got == pytest.approx((0.0, 0.2, 0.6, 0.6))
+
+
+def test_pickup_options_have_bikes_and_carry_p_empty():
+    df = stations(num_bikes_available=[5, 0, 3, 2, 9, 9], p_empty_15=[0.1, 0.0, 0.3, 0.2, 0.0, 0.0])
+    opts = rp.pickup_options(df, DEST, radius_m=1500)
+    # A has no bike, F is out of service and S is stale; O is 2.9 km away on foot.
+    assert opts["station_id"].to_list() == ["B", "C"]
+    b = opts.row(0, named=True)
+    assert b["p_empty"] == pytest.approx(0.3 * b["walk_min"] / 15)
+    # Nothing within the radius: still the nearest one.
+    assert rp.pickup_options(df, DEST, radius_m=10)["station_id"].to_list() == ["B"]
+
+
+def test_plan_reads_p_full_after_the_walk_to_the_pickup():
+    early = rp.plan(stations(), "O", DEST, RIDES).filter(pl.col("station_id") == "B")
+    late = rp.plan(stations(), "O", DEST, RIDES, depart_after_min=10).filter(
+        pl.col("station_id") == "B"
+    )
+    # B: ride 30 → P(full) 0.2; with a 10-min walk first, arrival at 40, between the 30
+    # (0.2) and 45 (0.3) min models → 0.2 + 10/15 × 0.1.
+    assert early["p_full"][0] == pytest.approx(0.2)
+    assert late["p_full"][0] == pytest.approx(0.2 + 10 / 15 * 0.1)

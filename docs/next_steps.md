@@ -55,6 +55,13 @@ El horizonte es cuánto tiempo hacia adelante predice el modelo: del momento en 
    - **2026-01 es la prueba principal.** 2026-09 (~14 días hábiles, en temporada de lluvias) se reporta aparte.
 5. **Pipeline de evaluación sobre la captura.** GBFS JSON → las mismas 33 variables → predicciones → métricas. Probarlo solo en la ventana del 2026-10-06, 11:37–14:38 hora local (17:37–20:38 UTC). Esa ventana queda marcada como *dev* y fuera de la prueba final para siempre.
 
+### Hecho después de la prueba final (2026-10-07)
+
+- **Predicciones en vivo y API** (primer corte del paso 5): `ecobici.live` lleva la captura propia por el mismo código de variables. `ecobici.api` (FastAPI) sirve `/v1/stations` y `/v1/plan` leyendo S3 con la sesión de `aws login` (`botocore[crt]`), sin llaves.
+- **Planificador web** (`web/`, Next 16, sobre el esqueleto de *a-donde-ir*): dirección o estación de partida y de destino, estaciones a ≤ 500 m del destino con P(anclaje libre) a su propia hora de llegada (PRD RF1–RF5, RF7, RF9).
+- **Modelo de estación vacía** (P(sin bici) a 15 min): BSS +0.45 en todas y +0.22 en el pico, calibración con holgura. La estación de partida se elige con él ([M6-empty](reports/M6_empty.md)). Falta confirmarlo en la captura (paso 9).
+- **Pendiente del planificador:** respaldo con baja dependencia de la principal (RF6), y P(sin bici) a 5 y 10 min con la captura (M7).
+
 ### Probado y descartado
 
 - **Rezagos con ventana centrada** (2026-10-07). Recupera casi todos los rezagos (de ~47 % a ~95 %), pero en VAL_REPORT el BSS cambia ≤ 0.003 y la calibración no cambia. El modelo congelado sigue con `trailing`. Ver [M6](reports/M6_lgbm.md#experimento-rezagos-con-ventana-centrada-2026-10-07).
@@ -69,6 +76,7 @@ El horizonte es cuánto tiempo hacia adelante predice el modelo: del momento en 
 8. ✅ **Prueba final de 15, 30 y 45 min** (2026-10-07). Protocolo registrado y commit antes de correr (`4b2c0eb`), corrida única con `ecobici.eval.test_report`. **Cumple los tres criterios en los dos meses.** Ver [M6_test](reports/M6_test.md).
 9. **Prueba en datos reales:** el mismo modelo congelado sobre la captura propia, con al menos ~10 mañanas entre semana (~2 semanas).
    - **Reportar `p_lgbm` al lado de `p_lgbm_sub_roll`.** En la prueba final la calibración por subgrupo no ayudó, y aquí se decide si se queda.
+   - **Evaluar también el modelo de estación vacía** (`artifacts/empty/`): es su única prueba fuera de muestra.
    - Usar el mismo bootstrap por días del paso 2.
    - La recalibración semanal del subgrupo usa el Platt fijo hasta que la captura junte ~1.5 semanas de picos.
    - Con 66 días hábiles en VAL_REPORT, el IC del BSS ya mide ±0.02. Con ~10 mañanas será unas 2.5 veces más ancho (≈ ±0.05), suficiente para confirmar BSS > 0.10 pero no para medir la calibración. Para eso hacen falta más semanas.

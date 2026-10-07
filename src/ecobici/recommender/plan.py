@@ -92,8 +92,12 @@ def plan(
     radius_m: float = 500,
     failure_cost_min: float = 7.5,
     min_candidates: int = 2,
+    depart_after_min: float = 0.0,
 ) -> pl.DataFrame:
     """Candidate stations near ``destination`` (lat, lon), best first.
+
+    ``depart_after_min``: minutes before the ride starts (the walk to the pickup), so
+    each candidate's P(full) is read at its real arrival: that walk plus the ride.
 
     ``stations`` has one row per station: station_id, lat, lon, label and
     ``p_full_{h}`` for each model horizon (null when not predicted). Returns the
@@ -130,8 +134,9 @@ def plan(
         .then(pl.format("median of {} trips", pl.col("trips")))
         .otherwise(pl.lit(f"estimate at {BIKE_KMH:.0f} km/h")),
     ).with_columns(
-        p_full=p_full_at(p, pl.col("ride_min")),
-        outside_horizons=(pl.col("ride_min") < HORIZONS[0]) | (pl.col("ride_min") > HORIZONS[-1]),
+        p_full=p_full_at(p, pl.col("ride_min") + depart_after_min),
+        outside_horizons=(pl.col("ride_min") + depart_after_min < HORIZONS[0])
+        | (pl.col("ride_min") + depart_after_min > HORIZONS[-1]),
     )
     out = out.with_columns(
         p_free=1 - pl.col("p_full"),
@@ -169,3 +174,43 @@ def nearest_with_bike(stations: pl.DataFrame, point: tuple[float, float]) -> dic
         return None
     r = rows.row(0, named=True)
     return {**r, "walk_min": r["walk_m"] / (WALK_KMH * 1000 / 60)}
+
+
+PICKUP_RADIUS_M = 600  # walking distance to look for a bike
+PICKUP_OPTIONS = 4
+EMPTY_HORIZON = 15  # the empty model's horizon (MaxHalford's cadence allows no shorter)
+
+
+def p_empty_at(p15: pl.Expr, walk_min: pl.Expr) -> pl.Expr:
+    """P(no bike left when you get there). The station has a bike now (P = 0 at 0 min)
+    and the model gives P at 15 min; in between, linear. Beyond 15 min, the 15-min value.
+    An approximation until 5 / 10 min models exist (M7, from the 2-min captures)."""
+    return p15 * (walk_min / EMPTY_HORIZON).clip(0, 1)
+
+
+def pickup_options(
+    stations: pl.DataFrame,
+    point: tuple[float, float],
+    radius_m: float = PICKUP_RADIUS_M,
+    limit: int = PICKUP_OPTIONS,
+) -> pl.DataFrame:
+    """Up to ``limit`` stations to take a bike from near ``point``: usable, with a bike
+    now, within ``radius_m`` on foot (always at least the nearest one), with walk and
+    ``p_empty`` (P(no bike left on arrival); null without a forecast)."""
+    lat, lon = point
+    rows = (
+        stations.filter(pl.col("label").is_in(USABLE) & (pl.col("num_bikes_available") > 0))
+        .with_columns(walk_m=distance_m(pl.col("lat"), pl.col("lon"), lat, lon) * DETOUR)
+        .sort("walk_m")
+        .with_row_index("by_distance")
+        .filter((pl.col("walk_m") <= radius_m) | (pl.col("by_distance") == 0))
+        .head(limit)
+        .drop("by_distance")
+        .with_columns(walk_min=pl.col("walk_m") / (WALK_KMH * 1000 / 60))
+    )
+    p15 = (
+        pl.col(f"p_empty_{EMPTY_HORIZON}")
+        if f"p_empty_{EMPTY_HORIZON}" in rows.columns
+        else pl.lit(None)
+    )
+    return rows.with_columns(p_empty=p_empty_at(p15, pl.col("walk_min")))

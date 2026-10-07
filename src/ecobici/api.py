@@ -38,6 +38,8 @@ class Station(BaseModel):
     state: str  # available | full | unavailable | stale
     # P(full) at 15 / 30 / 45 min, keyed by minutes; null when not predicted.
     p_full: dict[str, float] | None
+    # P(no bike) at 15 min, keyed by minutes; null without the empty-station model.
+    p_empty: dict[str, float] | None = None
 
 
 class StationsResponse(BaseModel):
@@ -50,6 +52,10 @@ class StationsResponse(BaseModel):
 class Pickup(Station):
     walk_m: float
     walk_min: float
+    # P(no bike left when you get there): 0 at the start station itself.
+    p_empty_at_arrival: float | None
+    # Walk + P(no bike) × failure cost + the best drop-off's expected minutes.
+    total_min: float | None
 
 
 class Candidate(Station):
@@ -72,6 +78,8 @@ class PlanResponse(BaseModel):
     radius_m: float
     failure_min: float
     pickup: Pickup
+    # The pickups compared, best total first (the first one is `pickup`).
+    pickup_options: list[Pickup]
     # The start station asked for, when it had no bike to take (empty, out of service or
     # not reporting) and the pickup moved to the nearest station with one.
     requested: Station | None
@@ -84,8 +92,27 @@ class Health(BaseModel):
     s3_error: str | None
 
 
+def finite(v: float | None) -> float | None:
+    return None if v is None or v != v or v in (float("inf"), float("-inf")) else v
+
+
+def pickup(row: dict) -> dict:
+    return {
+        **station(row),
+        "walk_m": row["walk_m"],
+        "walk_min": row["walk_min"],
+        "p_empty_at_arrival": finite(row.get("p_empty")),
+        "total_min": finite(row.get("total_min")),
+    }
+
+
 def station(row: dict) -> dict:
     p = {str(h): row[f"p_full_{h}"] for h in HORIZONS if row.get(f"p_full_{h}") is not None}
+    empty = {
+        k.removeprefix("p_empty_"): v
+        for k, v in row.items()
+        if k.startswith("p_empty_") and v is not None
+    }
     return {
         "id": row["station_id"],
         "code": row["short_name"],
@@ -97,6 +124,7 @@ def station(row: dict) -> dict:
         "bikes": row.get("num_bikes_available"),
         "state": row["label"],
         "p_full": p or None,
+        "p_empty": empty or None,
     }
 
 
@@ -154,8 +182,8 @@ def make_app(service: LiveService | None = None) -> FastAPI:
             p = svc.plan(start, (to_lat, to_lng), from_station, radius_m, failure_min)
         except LookupError as e:
             raise HTTPException(422 if "station" in str(e) else 503, str(e)) from e
-        now, pickup, requested = p["live"], p["pickup"], p["requested"]
-        leave = now.captured_at + timedelta(minutes=pickup["walk_min"])
+        now, chosen, requested = p["live"], p["pickup"], p["requested"]
+        leave = now.captured_at + timedelta(minutes=chosen["walk_min"])
         candidates = [
             {
                 **station(r),
@@ -178,7 +206,8 @@ def make_app(service: LiveService | None = None) -> FastAPI:
             weather_missing=now.weather_missing,
             radius_m=radius_m,
             failure_min=failure_min,
-            pickup={**station(pickup), "walk_m": pickup["walk_m"], "walk_min": pickup["walk_min"]},
+            pickup=pickup(chosen),
+            pickup_options=[pickup(o) for o in p["pickup_options"]],
             requested=station(requested) if requested else None,
             candidates=candidates,
         )

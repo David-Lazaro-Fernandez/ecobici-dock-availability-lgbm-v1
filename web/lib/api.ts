@@ -23,6 +23,8 @@ export type Station = {
   state: State;
   /** P(full) at 15 / 30 / 45 min, keyed by minutes. Null when the station is not predicted. */
   p_full: Record<string, number> | null;
+  /** P(no bike) at 15 min, keyed by minutes. Null without the empty-station model. */
+  p_empty: Record<string, number> | null;
 };
 
 export type StationsResponse = {
@@ -32,7 +34,14 @@ export type StationsResponse = {
   stations: Station[];
 };
 
-export type Pickup = Station & { walk_m: number; walk_min: number };
+export type Pickup = Station & {
+  walk_m: number;
+  walk_min: number;
+  /** P(no bike left when you get there); 0 at the start station itself. */
+  p_empty_at_arrival: number | null;
+  /** Walk + P(no bike) × failure cost + the best drop-off's expected minutes. */
+  total_min: number | null;
+};
 
 export type Candidate = Station & {
   /** 1 = best. Null when not recommendable (out of service or stale). */
@@ -56,6 +65,8 @@ export type PlanResponse = {
   radius_m: number;
   failure_min: number;
   pickup: Pickup;
+  /** The pickups compared, best total first. */
+  pickup_options: Pickup[];
   /** The start station asked for, when it had no bike to take and the pickup moved to the nearest one that does. */
   requested: Station | null;
   candidates: Candidate[];

@@ -551,6 +551,13 @@ input:focus-visible {
   color: var(--accent-ink);
 }
 
+.card__alts {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
 .code {
   font-size: 0.75em;
   font-weight: 500;

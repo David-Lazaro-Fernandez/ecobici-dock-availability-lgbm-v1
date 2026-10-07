@@ -29,6 +29,7 @@ S3_WINDOW = live.LOOKBACK + timedelta(minutes=5)  # what the lags need, with mar
 INFO_WINDOW = timedelta(days=2)  # station_information is captured daily at 06:00 UTC
 WEATHER_EVERY = timedelta(minutes=30)
 RIDE_HISTORY = timedelta(days=365)
+EMPTY_ARTIFACTS = Path("artifacts/empty")  # model_report --target empty --horizons 15
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,13 @@ class LiveService:
                     "saturated": live.saturated_by_horizon(files),
                     "flow": trip_flow(trip_ingest.DEFAULT_DIR, self.raw),
                 }
+                # The empty-station model (P(no bike) at 15 min), if it has been trained.
+                h = (rp.EMPTY_HORIZON,)
+                if (EMPTY_ARTIFACTS / f"lgbm_{h[0]}.txt").exists():
+                    self._model["empty"] = {
+                        "frozen": live.load_frozen(EMPTY_ARTIFACTS, h),
+                        "saturated": live.saturated_by_horizon(files, h, target="empty"),
+                    }
             return self._model
 
     def rides(self) -> pl.DataFrame:
@@ -132,6 +140,20 @@ class LiveService:
                 m["saturated"],
                 m["frozen"],
             )
+            if "empty" in m:
+                e = m["empty"]
+                h = rp.EMPTY_HORIZON
+                empty = live.predict(
+                    live.recent_captures(self.raw, at),
+                    info,
+                    m["files"],
+                    m["flow"],
+                    weather,
+                    e["saturated"],
+                    e["frozen"],
+                    target="empty",
+                ).select("sid", pl.col(f"p_full_{h}").alias(f"p_empty_{h}"))
+                pred = pred.join(empty, on="sid", how="left")
             snap = gbfs.snapshot_frame(info, gbfs.read_capture(latest)).stations
             stations = snap.join(
                 pred.rename({"sid": "station_id"}).drop("t"), on="station_id", how="left"
@@ -161,14 +183,42 @@ class LiveService:
                 raise LookupError(f"unknown station {start_station}")
             row = rows.row(0, named=True)
             if rp.has_bike(row):
-                pickup = {**row, "walk_m": 0.0, "walk_min": 0.0}
+                options = rows.with_columns(
+                    walk_m=pl.lit(0.0), walk_min=pl.lit(0.0), p_empty=pl.lit(0.0)
+                )
             else:
-                # No bike to take there right now: walk to the nearest station that has one.
+                # No bike to take there right now: look for one nearby.
                 requested = row
-                pickup = rp.nearest_with_bike(df, (row["lat"], row["lon"]))
+                options = rp.pickup_options(df, (row["lat"], row["lon"]))
         else:
-            pickup = rp.nearest_with_bike(df, start)
-        if pickup is None:
+            options = rp.pickup_options(df, start)
+        if options.is_empty():
             raise LookupError("no station with a bike near the start")
-        res = rp.plan(df, pickup["station_id"], goal, self.rides(), radius_m, failure_min)
-        return {"live": now, "pickup": pickup, "requested": requested, "candidates": res}
+        # Each pickup with its best drop-off: walk + P(no bike left) × failure cost +
+        # ride + walk + P(full) × failure cost. The lowest total wins.
+        scored = []
+        for opt in options.to_dicts():
+            res = rp.plan(
+                df,
+                opt["station_id"],
+                goal,
+                self.rides(),
+                radius_m,
+                failure_min,
+                depart_after_min=opt["walk_min"],
+            )
+            drop = res.filter(pl.col("rank") == 1)
+            risk = (opt["p_empty"] or 0.0) * failure_min
+            total = (
+                opt["walk_min"] + risk + (drop["expected_min"][0] if drop.height else float("inf"))
+            )
+            scored.append(({**opt, "total_min": total}, res))
+        scored.sort(key=lambda x: x[0]["total_min"])
+        pickup, res = scored[0]
+        return {
+            "live": now,
+            "pickup": pickup,
+            "pickup_options": [o for o, _ in scored],
+            "requested": requested,
+            "candidates": res,
+        }

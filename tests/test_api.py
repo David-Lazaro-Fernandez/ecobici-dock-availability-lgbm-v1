@@ -69,8 +69,10 @@ def test_plan_from_a_point_picks_the_nearest_bike_and_ranks_candidates(client):
     cands = {c["id"]: c for c in body["candidates"]}
     assert set(cands) == {"A", "B", "F"}
     assert cands["B"]["ride_source"] == "median of 40 trips"
-    # A 20-min ride sits between the 15 (0.1) and 30 (0.2) min models: P(full) ≈ 0.133.
-    assert cands["B"]["p_free"] == pytest.approx(1 - (0.1 + 5 / 15 * 0.1))
+    # Arrival = walk to the pickup + a 20-min ride, between the 15 (0.1) and 30 (0.2) min
+    # models: P(full) ≈ 0.133 plus the walk's share.
+    walk = body["pickup"]["walk_min"]
+    assert cands["B"]["p_free"] == pytest.approx(1 - (0.1 + (5 + walk) / 15 * 0.1))
     assert cands["F"]["rank"] is None and not cands["F"]["recommendable"]
     assert [c["rank"] for c in body["candidates"] if c["rank"]] == [1, 2]
     # Arrival = capture + walk to the pickup + ride.
@@ -130,3 +132,38 @@ def test_a_start_station_with_bikes_is_the_pickup():
         .json()
     )
     assert body["requested"] is None and body["pickup"]["id"] == "O"
+
+
+def test_the_pickup_weighs_the_chance_of_finding_no_bike():
+    svc = FakeService()
+    # N is a second station 160 m north of O. From a point next to O, O is nearer but
+    # likely empty by the time you get there; N is safe.
+    near = svc.stations.filter(pl.col("station_id") == "O").with_columns(
+        station_id=pl.lit("N"),
+        short_name=pl.lit("005"),
+        name=pl.lit("Next door"),
+        lat=pl.lit(19.3815),
+    )
+    svc.stations = pl.concat([svc.stations, near]).with_columns(
+        p_empty_15=pl.when(pl.col("station_id") == "O").then(0.95).otherwise(0.0)
+    )
+    body = (
+        TestClient(make_app(svc))
+        .get(
+            "/v1/plan",
+            params={
+                "from_lat": 19.3803,
+                "from_lng": -99.17,
+                "to_lat": 19.4,
+                "to_lng": -99.17,
+                "failure_min": 30,
+            },
+        )
+        .json()
+    )
+    opts = {o["id"]: o for o in body["pickup_options"]}
+    assert set(opts) == {"O", "N"}
+    assert opts["O"]["walk_m"] < opts["N"]["walk_m"]
+    assert opts["O"]["p_empty_at_arrival"] > 0 and opts["N"]["p_empty_at_arrival"] == 0
+    assert body["pickup"]["id"] == "N"
+    assert body["pickup_options"][0]["id"] == "N"
