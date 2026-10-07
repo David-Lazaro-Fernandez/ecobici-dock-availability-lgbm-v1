@@ -61,3 +61,41 @@ def test_bucket_from_env_missing(tmp_path, monkeypatch):
     monkeypatch.delenv(cs.BUCKET_ENV, raising=False)
     with pytest.raises(SystemExit):
         cs.bucket_from_env(tmp_path / ".env")
+
+
+def test_download_recent_lists_only_the_window_days(tmp_path):
+    from datetime import UTC, datetime
+
+    def key(day, ts):
+        return f"raw/station_status/2026/10/{day}/station_status_202610{day}T{ts}Z.json.gz"
+
+    old = key("06", "235800")  # before the window
+    late = key("06", "235900")
+    early = key("07", "000100")
+    future = key("07", "001000")  # after `until`
+    other_day = key("05", "120000")
+    s3 = FakeS3([[{"Key": k, "Size": 1} for k in (other_day, old, late, early, future)]])
+    listed = []
+    paginate = s3.paginate
+    s3.paginate = lambda Bucket, Prefix: (listed.append(Prefix), paginate(Bucket, Prefix))[1]
+
+    got = cs.download_recent(
+        "b",
+        "station_status",
+        since=datetime(2026, 10, 6, 23, 59, tzinfo=UTC),
+        until=datetime(2026, 10, 7, 0, 5, tzinfo=UTC),
+        dest=tmp_path,
+        client=s3,
+    )
+    assert got == (2, 2)
+    assert s3.fetched == [late, early]
+    assert listed == ["raw/station_status/2026/10/06/", "raw/station_status/2026/10/07/"]
+    # Already present with the same size: nothing new.
+    assert cs.download_recent(
+        "b",
+        "station_status",
+        since=datetime(2026, 10, 6, 23, 59, tzinfo=UTC),
+        until=datetime(2026, 10, 7, 0, 5, tzinfo=UTC),
+        dest=tmp_path,
+        client=s3,
+    ) == (0, 2)

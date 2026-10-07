@@ -7,13 +7,16 @@ local copy with the same size is never fetched again.
 
 import argparse
 import os
+import re
 import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 PREFIX = "raw"
 DEFAULT_DIR = Path("raw")
 BUCKET_ENV = "S3_BUCKET_NAME"
+KEY_TS = re.compile(r"_(\d{8}T\d{6}Z)\.json\.gz$")
 
 
 @dataclass(frozen=True)
@@ -45,6 +48,30 @@ def list_remote(client, bucket: str, prefix: str = PREFIX) -> list[RemoteObject]
     return sorted(objects, key=lambda o: o.key)
 
 
+def _client(client):
+    if client is None:
+        import boto3
+
+        client = boto3.client("s3")
+    return client
+
+
+def _fetch(client, bucket: str, objects: list[RemoteObject], root: str, dest: Path) -> list[Path]:
+    """Download each object missing locally (or with another size); return the newly
+    written paths. Keys keep their layout under ``dest``, without the ``root`` prefix."""
+    written = []
+    for o in objects:
+        path = dest / o.key.removeprefix(f"{root}/")
+        if path.exists() and path.stat().st_size == o.size:
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        client.download_file(bucket, o.key, str(tmp))
+        tmp.replace(path)
+        written.append(path)
+    return written
+
+
 def download(
     bucket: str,
     dest: Path = DEFAULT_DIR,
@@ -57,24 +84,42 @@ def download(
     ``feed`` (e.g. ``station_status``) limits the sync to one feed. Returns
     ``(downloaded, total)``.
     """
-    if client is None:
-        import boto3
-
-        client = boto3.client("s3")
+    client = _client(client)
     root = prefix.strip("/")
     scope = f"{root}/{feed}" if feed else root
     objects = list_remote(client, bucket, scope)
-    downloaded = 0
-    for o in objects:
-        path = dest / o.key.removeprefix(f"{root}/")
-        if path.exists() and path.stat().st_size == o.size:
-            continue
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        client.download_file(bucket, o.key, str(tmp))
-        tmp.replace(path)
-        downloaded += 1
-    return downloaded, len(objects)
+    return len(_fetch(client, bucket, objects, root, dest)), len(objects)
+
+
+def download_recent(
+    bucket: str,
+    feed: str,
+    since: datetime,
+    dest: Path = DEFAULT_DIR,
+    prefix: str = PREFIX,
+    until: datetime | None = None,
+    client=None,
+) -> tuple[int, int]:
+    """Fetch one feed's captures taken in [since, until] (default: up to now).
+
+    Lists only the UTC day folders that window touches (``<feed>/YYYY/MM/DD/``), so it
+    stays fast however long the collector has been running. Returns
+    ``(downloaded, in_window)``.
+    """
+    client = _client(client)
+    root = prefix.strip("/")
+    since = since.astimezone(UTC)
+    until = (until or datetime.now(UTC)).astimezone(UTC)
+    objects = []
+    day = since.date()
+    while day <= until.date():
+        for o in list_remote(client, bucket, f"{root}/{feed}/{day:%Y/%m/%d}"):
+            m = KEY_TS.search(o.key)
+            ts = m and datetime.strptime(m.group(1), "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+            if ts and since <= ts <= until:
+                objects.append(o)
+        day += timedelta(days=1)
+    return len(_fetch(client, bucket, objects, root, dest)), len(objects)
 
 
 def main(argv: list[str] | None = None) -> int:

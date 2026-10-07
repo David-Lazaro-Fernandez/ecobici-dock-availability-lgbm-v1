@@ -63,7 +63,7 @@ def latest_information(root: Path) -> dict | None:
     return read_capture(files[-1]) if files else None
 
 
-def _frame(records: list[dict], schema: dict) -> pl.DataFrame:
+def frame(records: list[dict], schema: dict) -> pl.DataFrame:
     """Keep only the schema's columns; GBFS entries carry extra and sometimes missing keys."""
     return pl.DataFrame([{k: r.get(k) for k in schema} for r in records], schema=schema)
 
@@ -72,11 +72,11 @@ def snapshot_frame(information: dict, status: dict) -> Snapshot:
     """One row per station: location, capacity, current counts and label."""
     feed_updated = int(status["last_updated"])
     stations = status["data"]["stations"]
-    st = _frame(stations, STATUS_SCHEMA).with_columns(
+    st = frame(stations, STATUS_SCHEMA).with_columns(
         label=pl.Series([str(classify(s, feed_updated)) for s in stations], dtype=pl.String),
         minutes_since_report=(feed_updated - pl.col("last_reported")) / 60,
     )
-    info = _frame(information["data"]["stations"], INFO_SCHEMA)
+    info = frame(information["data"]["stations"], INFO_SCHEMA)
     return Snapshot(info.join(st, on="station_id", how="inner"), feed_updated)
 
 

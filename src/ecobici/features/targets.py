@@ -41,6 +41,21 @@ def load_snapshots(con: duckdb.DuckDBPyConnection, files: list[Path]) -> None:
     )
 
 
+def _example_cols(horizon_min: int) -> str:
+    """Everything an example knows at t (``now`` is a snap row), shared by training
+    examples and live predictions."""
+    return f"""now.sid, now.t, now.month,
+               (extract(hour FROM now.t) * 60 + extract(minute FROM now.t)) // 15 AS slot,
+               -- Slot and day type at *arrival* (t + h): where the dock is contested.
+               (extract(hour FROM now.t + INTERVAL ({horizon_min}) MINUTE) * 60
+                + extract(minute FROM now.t + INTERVAL ({horizon_min}) MINUTE)) // 15
+                   AS target_slot,
+               isodow(now.t + INTERVAL ({horizon_min}) MINUTE) >= 6 AS weekend,
+               now.is_full AS full_now,
+               now.docks AS docks_now,
+               now.capacity"""
+
+
 def build_examples(con: duckdb.DuckDBPyConnection, horizon_min: int) -> None:
     """Table ``ex_{h}``: sid, t, month, slot, target_slot, weekend (at arrival),
     full_now, docks_now, capacity, y."""
@@ -52,16 +67,7 @@ def build_examples(con: duckdb.DuckDBPyConnection, horizon_min: int) -> None:
             SELECT *, t + INTERVAL ({h_s - tol_s}) SECOND AS lo
             FROM snap WHERE ok
         )
-        SELECT now.sid, now.t, now.month,
-               (extract(hour FROM now.t) * 60 + extract(minute FROM now.t)) // 15 AS slot,
-               -- Slot and day type at *arrival* (t + h): where the dock is contested.
-               (extract(hour FROM now.t + INTERVAL ({horizon_min}) MINUTE) * 60
-                + extract(minute FROM now.t + INTERVAL ({horizon_min}) MINUTE)) // 15
-                   AS target_slot,
-               isodow(now.t + INTERVAL ({horizon_min}) MINUTE) >= 6 AS weekend,
-               now.is_full AS full_now,
-               now.docks AS docks_now,
-               now.capacity,
+        SELECT {_example_cols(horizon_min)},
                fut.is_full AS y
         FROM now
         ASOF JOIN snap fut ON fut.sid = now.sid AND fut.t >= now.lo
@@ -69,3 +75,18 @@ def build_examples(con: duckdb.DuckDBPyConnection, horizon_min: int) -> None:
           AND fut.ok
         """
     )
+
+
+def build_now(con: duckdb.DuckDBPyConnection, horizon_min: int, at) -> str:
+    """Table ``now_{h}``: like ``ex_{h}`` for every in-service station at the snapshot
+    ``at``, with no label yet (y is NULL). Returns its name."""
+    out = f"now_{horizon_min}"
+    con.execute(
+        f"""
+        CREATE OR REPLACE TABLE {out} AS
+        SELECT {_example_cols(horizon_min)}, NULL::BOOLEAN AS y
+        FROM snap now WHERE now.ok AND now.t = ?
+        """,
+        [at],
+    )
+    return out
