@@ -47,8 +47,17 @@ def validation_frame(con: duckdb.DuckDBPyConnection, pred: str) -> pl.DataFrame:
     ).pl()
 
 
+def is_peak() -> pl.Expr:
+    return (~pl.col("weekend")) & pl.col("target_slot").is_between(*PEAK_SLOTS)
+
+
+def is_saturated_peak(saturated: list[str]) -> pl.Expr:
+    """Known at prediction time: the arrival slot and the station's train-time label."""
+    return is_peak() & pl.col("sid").is_in(saturated)
+
+
 def segments(df: pl.DataFrame, saturated: list[str]) -> dict[str, pl.DataFrame]:
-    peak = (~pl.col("weekend")) & pl.col("target_slot").is_between(*PEAK_SLOTS)
+    peak = is_peak()
     sat = pl.col("sid").is_in(saturated)
     return {
         "all": df,

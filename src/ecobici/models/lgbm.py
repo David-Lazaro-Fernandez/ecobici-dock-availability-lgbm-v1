@@ -1,5 +1,6 @@
 """M6: one LightGBM classifier per horizon for P(station full at t + h), plus an
-isotonic calibrator fitted on held-out validation months."""
+isotonic calibrator fitted on held-out validation months, and a Platt recalibration
+for the saturated_peak subgroup (static or rolling)."""
 
 import json
 import os
@@ -11,6 +12,7 @@ import lightgbm as lgb
 import numpy as np
 import polars as pl
 from sklearn.isotonic import IsotonicRegression
+from sklearn.linear_model import LogisticRegression
 
 from ecobici.features.model_matrix import CATEGORICAL, FEATURES
 
@@ -96,8 +98,7 @@ def train(
         callbacks=[lgb.early_stopping(EARLY_STOPPING, verbose=False), lgb.log_evaluation(0)],
     )
     raw = booster.predict(X_fit, num_iteration=booster.best_iteration)
-    calibrator = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip").fit(raw, y_fit)
-    return Model(booster, calibrator)
+    return Model(booster, fit_isotonic(raw, y_fit))
 
 
 def importance(model: Model, top: int = 15) -> list[tuple[str, float]]:
@@ -108,6 +109,39 @@ def importance(model: Model, top: int = 15) -> list[tuple[str, float]]:
     return ranked[:top]
 
 
+def fit_isotonic(p: np.ndarray, y: np.ndarray) -> IsotonicRegression:
+    return IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip").fit(p, y)
+
+
+@dataclass
+class Platt:
+    """P = σ(a · logit(p) + b): two parameters, monotone, smooth. Used to recalibrate an
+    already calibrated probability inside a small subgroup, where isotonic would
+    overfit its many steps."""
+
+    a: float
+    b: float
+
+    EPS = 1e-6
+
+    @classmethod
+    def logit(cls, p: np.ndarray) -> np.ndarray:
+        q = np.clip(p, cls.EPS, 1 - cls.EPS)
+        return np.log(q / (1 - q))
+
+    @classmethod
+    def fit(cls, p: np.ndarray, y: np.ndarray) -> "Platt":
+        lr = LogisticRegression(C=np.inf).fit(cls.logit(p)[:, None], y)
+        return cls(float(lr.coef_[0, 0]), float(lr.intercept_[0]))
+
+    def predict(self, p: np.ndarray) -> np.ndarray:
+        return 1 / (1 + np.exp(-(self.a * self.logit(p) + self.b)))
+
+    def save(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"a": self.a, "b": self.b}))
+
+
 def rolling_recalibrate(
     times: pl.Series,
     raw: np.ndarray,
@@ -115,14 +149,18 @@ def rolling_recalibrate(
     score_from,
     window_days: int = 28,
     step_days: int = 7,
+    fit=fit_isotonic,
+    min_rows: int = 1000,
+    fallback=None,
 ) -> np.ndarray:
     """Recalibrate weekly on the trailing ``window_days`` of labelled predictions.
 
     Emulates the PRD's daily retraining at the cheapest level: the booster is fixed and
-    only the isotonic map is refitted. For each week starting at or after
-    ``score_from``, the calibrator sees rows strictly before that week (labels up to
-    t + h are known by then because the week boundary trails by at least a day).
-    Rows before ``score_from`` are returned as NaN.
+    only the calibration map is refitted. For each week starting at or after
+    ``score_from``, ``fit(p, y)`` (anything with ``.predict``) sees rows strictly
+    before that week (labels up to t + h are known by then because the week boundary
+    trails by at least a day). A week whose window has fewer than ``min_rows`` rows
+    uses ``fallback`` if given, else stays NaN. Rows before ``score_from`` are NaN.
     """
     t = times.to_numpy()
     out = np.full(len(raw), np.nan)
@@ -130,10 +168,14 @@ def rolling_recalibrate(
     end = t.max()
     while week <= end:
         nxt = week + np.timedelta64(step_days, "D")
-        fit = (t >= week - np.timedelta64(window_days, "D")) & (t < week - np.timedelta64(1, "D"))
+        window = (t >= week - np.timedelta64(window_days, "D")) & (
+            t < week - np.timedelta64(1, "D")
+        )
         score = (t >= week) & (t < nxt)
-        if score.any() and fit.sum() >= 1000:
-            iso = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip")
-            out[score] = iso.fit(raw[fit], y[fit]).predict(raw[score])
+        if score.any():
+            if window.sum() >= min_rows:
+                out[score] = fit(raw[window], y[window]).predict(raw[score])
+            elif fallback is not None:
+                out[score] = fallback.predict(raw[score])
         week = nxt
     return out

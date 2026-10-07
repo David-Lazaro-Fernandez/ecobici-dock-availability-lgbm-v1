@@ -11,6 +11,13 @@ The targets keep the pre-registered reference (baselines fitted on TRAIN). The m
 also sees VAL_FIT, so the report adds a fair reference: the best of the baselines refit
 on TRAIN + VAL_FIT (``_tvf``) or recalibrated on VAL_FIT (``_iso``). Every BSS and
 calibration gap gets a 95 % block-bootstrap interval (eval/bootstrap.py).
+
+Subgroup calibration (next_steps.md, step 3): the global isotonic map is fitted on all
+rows, 97 % of them easy "not full" cases, and leaves saturated_peak over-predicted.
+``p_lgbm_sub`` recalibrates only saturated_peak rows with a Platt map fitted on VAL_FIT;
+``p_lgbm_sub_roll`` refits that map weekly on the trailing 28 days of saturated_peak
+rows and falls back to the static map when the window is short. ``p_lgbm_sub_roll`` is
+the model frozen for the test months (FROZEN); ``p_lgbm`` stays the pre-registered one.
 """
 
 import argparse
@@ -26,7 +33,12 @@ from sklearn.isotonic import IsotonicRegression
 
 from ecobici import config
 from ecobici.eval import bootstrap, metrics
-from ecobici.eval.baseline_report import HORIZONS, saturated_stations, segments
+from ecobici.eval.baseline_report import (
+    HORIZONS,
+    is_saturated_peak,
+    saturated_stations,
+    segments,
+)
 from ecobici.eval.splits import TRAIN, VAL_FIT, VAL_REPORT, VALIDATION
 from ecobici.features import model_matrix, targets
 from ecobici.features import trips as trip_features
@@ -42,9 +54,15 @@ ISO_BASELINES = [f"{b}_iso" for b in baselines.FITTED]
 ALL_BASELINES = [*BASELINES, *REFIT_BASELINES, *ISO_BASELINES]
 # p_lgbm is the pre-registered model (one calibration on VAL_FIT). p_lgbm_recal adds
 # weekly rolling recalibration, chosen after seeing drift in M6; confirm it on test.
-LGBM = ["p_lgbm_raw", "p_lgbm", "p_lgbm_recal"]
+LGBM = ["p_lgbm_raw", "p_lgbm", "p_lgbm_recal", "p_lgbm_sub", "p_lgbm_sub_roll"]
 MODELS = [*ALL_BASELINES, *LGBM]
 PRIMARY = "p_lgbm"
+# Chosen on 2026-10-06 after VAL_REPORT, before reading any test month.
+FROZEN = "p_lgbm_sub_roll"
+CHECKED = (PRIMARY, "p_lgbm_recal", "p_lgbm_sub", FROZEN)
+# A rolling subgroup window needs about a week and a half of weekday peaks (~19 k
+# saturated_peak rows a month); shorter windows use the static VAL_FIT map.
+SUB_MIN_ROWS = 5000
 N_BOOT = 1000
 REPORT_START = np.datetime64("2025-10-01T06:00")  # 2025-10-01 00:00 CDMX, in UTC
 TARGET_BSS_PRODUCT = 0.10
@@ -122,6 +140,23 @@ def run_horizon(con, h: int, artifacts: Path) -> dict:
     times = meta["t"].dt.convert_time_zone("UTC").dt.replace_time_zone(None)
     recal = lgbm.rolling_recalibrate(times, raw, yr, score_from=REPORT_START)
     in_report = times.to_numpy() >= REPORT_START
+    p_global = model.calibrator.predict(raw)
+    # Subgroup recalibration on top of the global map, saturated_peak rows only.
+    sub = meta.select(is_saturated_peak(saturated)).to_series().to_numpy()
+    fit_rows = sub & ~in_report
+    static = lgbm.Platt.fit(p_global[fit_rows], yr[fit_rows])
+    static.save(artifacts / f"platt_sub_{h}.json")
+    p_sub, p_sub_roll = p_global.copy(), p_global.copy()
+    p_sub[sub] = static.predict(p_global[sub])
+    p_sub_roll[sub] = lgbm.rolling_recalibrate(
+        times.filter(pl.Series(sub)),
+        p_global[sub],
+        yr[sub],
+        score_from=REPORT_START,
+        fit=lgbm.Platt.fit,
+        min_rows=SUB_MIN_ROWS,
+        fallback=static,
+    )
     # Baselines get the model's own calibration step: isotonic on VAL_FIT.
     iso = {
         f"{b}_iso": IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip")
@@ -131,8 +166,10 @@ def run_horizon(con, h: int, artifacts: Path) -> dict:
     }
     report = meta.with_columns(
         p_lgbm_raw=pl.Series(raw),
-        p_lgbm=pl.Series(model.calibrator.predict(raw)),
+        p_lgbm=pl.Series(p_global),
         p_lgbm_recal=pl.Series(recal),
+        p_lgbm_sub=pl.Series(p_sub),
+        p_lgbm_sub_roll=pl.Series(p_sub_roll),
         **{k: pl.Series(v) for k, v in iso.items()},
     ).filter(pl.Series(in_report))
     for t in (f"ex_{h}", f"pred_{h}", f"feat_{h}", f"train_{h}"):
@@ -156,24 +193,26 @@ def run_horizon(con, h: int, artifacts: Path) -> dict:
         for block in bootstrap.BLOCKS:
             ids = bootstrap.block_ids(seg, block)
             for kind, ref in (("pre-registered", best), ("fair", fair)):
-                bss = bootstrap.brier_skill(seg, [PRIMARY], ref["model"], ids, N_BOOT)[:, 0]
-                lo, hi = bootstrap.interval(bss)
-                point = s.filter(pl.col("model") == PRIMARY)[
-                    "bss" if kind == "pre-registered" else "bss_fair"
-                ].item()
-                ci.append(
-                    {
-                        "segment": name,
-                        "block": block,
-                        "reference": ref["model"],
-                        "kind": kind,
-                        "bss": point,
-                        "lo": lo,
-                        "hi": hi,
-                        "blocks": int(ids.max()) + 1,
-                    }
-                )
-        for m in (PRIMARY, "p_lgbm_recal"):
+                bss = bootstrap.brier_skill(seg, [PRIMARY, FROZEN], ref["model"], ids, N_BOOT)
+                for j, m in enumerate((PRIMARY, FROZEN)):
+                    lo, hi = bootstrap.interval(bss[:, j])
+                    point = s.filter(pl.col("model") == m)[
+                        "bss" if kind == "pre-registered" else "bss_fair"
+                    ].item()
+                    ci.append(
+                        {
+                            "model": m,
+                            "segment": name,
+                            "block": block,
+                            "reference": ref["model"],
+                            "kind": kind,
+                            "bss": point,
+                            "lo": lo,
+                            "hi": hi,
+                            "blocks": int(ids.max()) + 1,
+                        }
+                    )
+        for m in CHECKED:
             bss = s.filter(pl.col("model") == m)["bss"].item()
             checks.append((m, f"BSS > 0, {name}", bss, bss > 0))
             if name == "saturated_peak" and h == 30:
@@ -181,7 +220,7 @@ def run_horizon(con, h: int, artifacts: Path) -> dict:
                 checks.append((m, f"BSS >= {TARGET_BSS_PRODUCT}, saturated_peak", bss, ok))
     sat_peak = segments(report, saturated)["saturated_peak"]
     rel, gap_ci = {}, []
-    for m in (PRIMARY, "p_lgbm_recal"):
+    for m in CHECKED:
         gap, rel[m] = calibration_gap(sat_peak, m)
         name = f"calibration gap <= {TARGET_CALIBRATION}, saturated_peak"
         checks.append((m, name, gap, gap <= TARGET_CALIBRATION))
@@ -213,7 +252,7 @@ def run_horizon(con, h: int, artifacts: Path) -> dict:
             "center": ece(report.filter(is_center), m),
             "periphery": ece(report.filter(~is_center), m),
         }
-        for m in (PRIMARY, "p_lgbm_recal")
+        for m in CHECKED
     }
     return {
         "horizon": h,
@@ -221,7 +260,7 @@ def run_horizon(con, h: int, artifacts: Path) -> dict:
         "checks": checks,
         "bss_ci": pl.DataFrame(ci),
         "gap_ci": pl.DataFrame(gap_ci),
-        "reliability": rel,
+        "reliability": {m: rel[m] for m in (PRIMARY, FROZEN)},
         "v8_ece": v8,
         "importance": lgbm.importance(model),
         "best_iteration": model.booster.best_iteration,
@@ -257,13 +296,14 @@ def render(results: list[dict]) -> str:
     out.append(
         f"\n## Intervalos de confianza (bootstrap por bloques, {N_BOOT} réplicas, IC 95 %)\n"
     )
-    out.append(f"### BSS de {PRIMARY}\n")
-    out.append("| Horizon | Segment | Referencia | Bloque | Bloques | BSS | IC 95 % |")
-    out.append("|---|---|---|---|---|---|---|")
+    out.append(f"### BSS de {PRIMARY} y {FROZEN}\n")
+    out.append("| Horizon | Segment | Modelo | Referencia | Bloque | Bloques | BSS | IC 95 % |")
+    out.append("|---|---|---|---|---|---|---|---|")
     for r in results:
         for c in r["bss_ci"].iter_rows(named=True):
             out.append(
-                f"| {r['horizon']} min | {c['segment']} | {c['reference']} ({c['kind']}) | "
+                f"| {r['horizon']} min | {c['segment']} | {c['model']} | "
+                f"{c['reference']} ({c['kind']}) | "
                 f"{c['block']} | {c['blocks']:,} | {c['bss']:+.3f} | "
                 f"[{c['lo']:+.3f}, {c['hi']:+.3f}] |"
             )
@@ -317,39 +357,38 @@ def render(results: list[dict]) -> str:
 
 
 def plot_reliability(results: list[dict], path: Path) -> None:
-    """Reliability diagram of PRIMARY on saturated_peak, one panel per horizon, with the
-    day-block 95 % interval of each bin's observed rate and the ±target band. Hollow
-    markers: bins under MIN_BIN_N, which the calibration target ignores."""
+    """Reliability diagram of PRIMARY and FROZEN on saturated_peak, one panel per
+    horizon, with the day-block 95 % interval of each bin's observed rate and the
+    ±target band. Hollow markers: bins under MIN_BIN_N, which the target ignores."""
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    ink, muted, grid, series = "#0b0b0b", "#52514e", "#e4e3df", "#2a78d6"
-    fig, axes = plt.subplots(1, len(results), figsize=(4 * len(results), 4.2), squeeze=False)
+    ink, muted, grid = "#0b0b0b", "#52514e", "#e4e3df"
+    colors = {PRIMARY: "#2a78d6", FROZEN: "#eb6834"}
+    fig, axes = plt.subplots(1, len(results), figsize=(4 * len(results), 4.6), squeeze=False)
     for ax, r in zip(axes[0], results, strict=True):
-        rel = r["reliability"][PRIMARY]
         d = np.linspace(0, 1, 2)
         ax.fill_between(d, d - TARGET_CALIBRATION, d + TARGET_CALIBRATION, color=grid, lw=0)
         ax.plot(d, d, color=muted, lw=1, ls="--")
-        x, o = rel["predicted"].to_numpy(), rel["observed"].to_numpy()
-        err = np.vstack([o - rel["observed_lo"].to_numpy(), rel["observed_hi"].to_numpy() - o])
-        ax.plot(x, o, color=series, lw=2, zorder=2)
-        ax.vlines(x, o - err[0], o + err[1], color=series, lw=1.5, zorder=2)
-        big = rel["n"].to_numpy() >= MIN_BIN_N
-        for mask, face in ((big, series), (~big, "white")):
-            ax.plot(x[mask], o[mask], "o", ms=8, mfc=face, mec=series, mew=2, zorder=3)
-        gap = next(
-            c
-            for c in r["gap_ci"].iter_rows(named=True)
-            if c["model"] == PRIMARY and c["block"] == "day"
-        )
-        ax.set_title(
-            f"{r['horizon']} min · brecha {gap['gap']:.3f} [{gap['lo']:.3f}, {gap['hi']:.3f}]",
-            color=ink,
-            fontsize=10,
-            loc="left",
-        )
+        title = [f"{r['horizon']} min"]
+        for m, series in colors.items():
+            rel = r["reliability"][m]
+            x, o = rel["predicted"].to_numpy(), rel["observed"].to_numpy()
+            lo, hi = rel["observed_lo"].to_numpy(), rel["observed_hi"].to_numpy()
+            ax.plot(x, o, color=series, lw=2, zorder=2, label=m)
+            ax.vlines(x, lo, hi, color=series, lw=1.5, zorder=2)
+            big = rel["n"].to_numpy() >= MIN_BIN_N
+            for mask, face in ((big, series), (~big, "white")):
+                ax.plot(x[mask], o[mask], "o", ms=8, mfc=face, mec=series, mew=2, zorder=3)
+            gap = next(
+                c
+                for c in r["gap_ci"].iter_rows(named=True)
+                if c["model"] == m and c["block"] == "day"
+            )
+            title.append(f"{m}: brecha {gap['gap']:.3f} [{gap['lo']:.3f}, {gap['hi']:.3f}]")
+        ax.set_title("\n".join(title), color=ink, fontsize=9, loc="left")
         ax.set(xlim=(0, 1), ylim=(0, 1), aspect="equal")
         ax.set_xlabel("Probabilidad predicha", color=muted, fontsize=9)
         ax.tick_params(colors=muted, labelsize=8, length=0)
@@ -358,8 +397,9 @@ def plot_reliability(results: list[dict], path: Path) -> None:
         for side in ("left", "bottom"):
             ax.spines[side].set_color(grid)
     axes[0][0].set_ylabel("Frecuencia observada de estación llena", color=muted, fontsize=9)
+    axes[0][0].legend(loc="upper left", frameon=False, fontsize=8, labelcolor=ink)
     fig.suptitle(
-        f"Calibración de {PRIMARY} en saturadas + pico (VAL_REPORT). "
+        "Calibración en saturadas + pico (VAL_REPORT). "
         f"Banda gris: ±{TARGET_CALIBRATION}; barras: IC 95 % por días; "
         f"huecos: bins con n < {MIN_BIN_N:,}.",
         color=ink,
@@ -404,8 +444,8 @@ def main(argv: list[str] | None = None) -> int:
         log(f"h={h}: done")
     print(render(results))
     plot_reliability(results, args.figure)
-    primary_ok = all(ok for r in results for m, _, _, ok in r["checks"] if m == PRIMARY)
-    return 0 if primary_ok else 2
+    frozen_ok = all(ok for r in results for m, _, _, ok in r["checks"] if m == FROZEN)
+    return 0 if frozen_ok else 2
 
 
 if __name__ == "__main__":

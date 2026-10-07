@@ -1,3 +1,5 @@
+import json
+
 import duckdb
 import numpy as np
 import polars as pl
@@ -84,3 +86,46 @@ def test_rolling_recalibrate_uses_only_the_past_and_tracks_drift():
     # Window [10-22, 11-18): 7 days at 50% and 20 at 10% → ≈ 0.20.
     assert abs(out[mixed].mean() - (7 * 0.5 + 20 * 0.1) / 27) < 0.02
     assert out[late].mean() < 0.12  # window is entirely in the 10% era
+
+
+def test_platt_corrects_overconfidence_and_round_trips(tmp_path):
+    # True probability is a squashed version of p: σ(0.6 · logit(p) − 0.4).
+    rng = np.random.default_rng(0)
+    p = rng.uniform(0.01, 0.99, 50_000)
+    truth = 1 / (1 + np.exp(-(0.6 * lgbm.Platt.logit(p) - 0.4)))
+    y = (rng.random(len(p)) < truth).astype(int)
+    platt = lgbm.Platt.fit(p, y)
+    assert abs(platt.a - 0.6) < 0.05 and abs(platt.b + 0.4) < 0.05
+    q = platt.predict(p)
+    assert np.all(np.diff(q[np.argsort(p)]) >= 0)  # monotone
+    assert np.abs(q - truth).max() < 0.03
+
+    platt.save(tmp_path / "platt.json")
+    loaded = lgbm.Platt(**json.loads((tmp_path / "platt.json").read_text()))
+    assert np.array_equal(loaded.predict(p), q)
+
+
+def test_rolling_recalibrate_falls_back_when_the_window_is_short():
+    # Two days of history, then a week to score: the window is below min_rows.
+    days = np.arange(np.datetime64("2025-10-01"), np.datetime64("2025-10-17"))
+    times = np.repeat(days, 100).astype("datetime64[us]")
+    rng = np.random.default_rng(0)
+    raw = rng.uniform(0.1, 0.9, len(times))
+    y = (rng.random(len(times)) < raw).astype(int)
+    fallback = lgbm.Platt(a=1.0, b=-1.0)
+    out = lgbm.rolling_recalibrate(
+        pl.Series(times),
+        raw,
+        y,
+        score_from=np.datetime64("2025-10-03"),
+        fit=lgbm.Platt.fit,
+        min_rows=500,
+        fallback=fallback,
+    )
+    week1 = (times >= np.datetime64("2025-10-03")) & (times < np.datetime64("2025-10-10"))
+    week2 = times >= np.datetime64("2025-10-10")
+    # Week 1 sees 10-01 only (the last day before the week is skipped): 100 rows.
+    assert np.array_equal(out[week1], fallback.predict(raw[week1]))
+    # Week 2 sees 10-01..10-08: 800 rows, so it fits its own map (≈ identity here).
+    assert not np.allclose(out[week2], fallback.predict(raw[week2]))
+    assert np.abs(out[week2] - raw[week2]).mean() < 0.05
