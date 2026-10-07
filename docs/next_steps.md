@@ -61,6 +61,14 @@ El horizonte es cuánto tiempo hacia adelante predice el modelo: del momento en 
 - **Planificador web** (`web/`, Next 16, sobre el esqueleto de *a-donde-ir*): dirección o estación de partida y de destino, estaciones a ≤ 500 m del destino con P(anclaje libre) a su propia hora de llegada (PRD RF1–RF5, RF7, RF9).
 - **Modelo de estación vacía** (P(sin bici) a 15 min): BSS +0.45 en todas y +0.22 en el pico, calibración con holgura. La estación de partida se elige con él ([M6-empty](reports/M6_empty.md)). Falta confirmarlo en la captura (paso 9).
 - **Pendiente del planificador:** respaldo con baja dependencia de la principal (RF6), y P(sin bici) a 5 y 10 min con la captura (M7).
+- **Modelos a 5 y 10 min, listos para entrenar** (`ecobici.eval.short_report`). MaxHalford no sirve aquí: con lecturas cada ~15 min no se ve qué pasa 5 min después. Las piezas:
+  - `ecobici.ingest.capture_snapshots`: la captura a un parquet por día con el esquema de MaxHalford, sin lecturas `stale`;
+  - etiqueta a ±1 min de *t* + h (a 5 min, en la práctica la lectura de +4 min) y rezagos de 2, 4 y 10 min;
+  - el modelo usa como entrada la predicción a 15 min ("apilado"), así que solo aprende la corrección de los últimos minutos y necesita menos días;
+  - días en orden: 60 % entrenamiento, 20 % calibración, 20 % reporte. Se compara con la persistencia calibrada, con el modelo a 15 min y con lo que hace hoy el planificador (lineal entre el estado actual y la predicción a 15 min).
+  - **Corre en seco** mientras el reporte tenga menos de 5 días entre semana (≈ 25 días de captura, hacia el 31 de octubre). En seco no guarda nada y sus números no son evidencia. La prueba con ~1.5 días funcionó de punta a punta (~1 min): la heurística lineal del planificador ya le gana al modelo a 15 min sin escalar.
+  - `ecobici-capture-report` ahora mide la cobertura de cada mañana entre semana (07:00–11:00). El 7 de octubre: 120 de 120.
+  - Las lecturas `stale` caen sobre todo de 02:00 a 05:00 (estaciones quietas). De día se conserva casi todo.
 
 ### Probado y descartado
 
@@ -69,7 +77,7 @@ El horizonte es cuánto tiempo hacia adelante predice el modelo: del momento en 
 ### Mientras corre la captura (2–4 semanas)
 
 6. **Revisar la salud de la captura cada pocos días** (ver [Cómo sincronizar](#cómo-sincronizar-la-captura)). Un hueco como el del primer día (105 min) no debe repetirse en las mañanas entre semana.
-7. *(Opcional)* Agregar `botocore[crt]` al extra `collector`, desde PyPI, para no tener que exportar credenciales.
+7. ✅ `botocore[crt]` está en el extra `api` (desde PyPI): boto3 lee la sesión de `aws login` sin exportar credenciales.
 
 ### Después, una sola vez
 
@@ -86,10 +94,10 @@ El horizonte es cuánto tiempo hacia adelante predice el modelo: del momento en 
 ## Cómo sincronizar la captura
 
 ```sh
-unset VIRTUAL_ENV                                         # si apunta a otro proyecto
-eval "$(aws configure export-credentials --format env)"   # boto3 no lee las credenciales de `aws login` sin botocore[crt]
-uv run python -m ecobici.ingest.captures download         # --feed station_status para un solo feed
+unset VIRTUAL_ENV                                                # si apunta a otro proyecto
+uv run --extra api python -m ecobici.ingest.captures download    # --feed station_status: un solo feed
 uv run ecobici-capture-report raw/station_status
+uv run python -m ecobici.ingest.capture_snapshots                # captura → un parquet por día
 ```
 
 El bucket se lee de `S3_BUCKET_NAME` (entorno o `.env`). Solo se descargan archivos nuevos o con otro tamaño.

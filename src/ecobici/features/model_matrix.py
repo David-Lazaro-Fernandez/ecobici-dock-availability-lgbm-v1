@@ -17,49 +17,55 @@ from ecobici.eval.splits import TRAIN
 NEIGHBOUR_RADIUS_M = 300  # PRD: neighbour occupancy "a unos 300 m"
 LAGS_MIN = (15, 30, 60)
 LAG_TOLERANCE_MIN = 7.5
-# How the reading for "L min ago" is chosen:
-# - trailing (frozen M6 model): the latest reading at or before t − L, if it is no
-#   older than t − L − 7.5. With a ~15 min jittery cadence this misses ~55 % of lags.
-# - centered: the reading nearest to t − L within ± 7.5 min (never t itself).
+# The reading for "L min ago":
+# - trailing (the frozen M6 model): the last reading at or before t − L, if it is not older
+#   than t − L − 7.5 min. At the ~15-min cadence, ~55 % of lags are missing.
+# - centered: the reading nearest to t − L, within ± 7.5 min. Never t itself.
 LAG_WINDOWS = ("trailing", "centered")
 
-FEATURES = [
-    # station identity and size
-    "station",
-    "capacity",
-    # state now
-    "docks_now",
-    "bikes_now",
-    "docks_disabled",
-    "occupancy_now",
-    # recent trend
-    *[f"docks_lag{lag}" for lag in LAGS_MIN],
-    *[f"docks_delta{lag}" for lag in LAGS_MIN],
-    *[f"full_lag{lag}" for lag in LAGS_MIN],
-    # neighbours at t
-    "nb_n",
-    "nb_full_frac",
-    "nb_occupancy_mean",
-    "nb_docks_sum",
-    # calendar
-    "minute_of_day",
-    "target_slot",
-    "weekday",
-    "weekend",
-    "holiday",
-    # weather
-    "precip_now",
-    "precip_next_hour",
-    "temperature_now",
-    # historical trip flow (train window)
-    "flow_arrivals_target",
-    "flow_departures_target",
-    "flow_net_target",
-    "flow_net_window",
-    # historical station profile (train window)
-    "st_full_rate",
-    "st_peak_full_rate",
-]
+
+def features(lags: tuple[int, ...] = LAGS_MIN) -> list[str]:
+    """Model inputs for a set of lags (minutes). The default is the M6 set."""
+    return [
+        # station identity and size
+        "station",
+        "capacity",
+        # state now
+        "docks_now",
+        "bikes_now",
+        "docks_disabled",
+        "occupancy_now",
+        # recent trend
+        *[f"docks_lag{lag}" for lag in lags],
+        *[f"docks_delta{lag}" for lag in lags],
+        *[f"full_lag{lag}" for lag in lags],
+        # neighbours at t
+        "nb_n",
+        "nb_full_frac",
+        "nb_occupancy_mean",
+        "nb_docks_sum",
+        # calendar
+        "minute_of_day",
+        "target_slot",
+        "weekday",
+        "weekend",
+        "holiday",
+        # weather
+        "precip_now",
+        "precip_next_hour",
+        "temperature_now",
+        # historical trip flow (train window)
+        "flow_arrivals_target",
+        "flow_departures_target",
+        "flow_net_target",
+        "flow_net_window",
+        # historical station profile (train window)
+        "st_full_rate",
+        "st_peak_full_rate",
+    ]
+
+
+FEATURES = features()
 CATEGORICAL = ["station"]
 
 
@@ -71,10 +77,10 @@ def prepare_shared(
 ) -> None:
     """Per-snapshot neighbour state, weather, flows, station profiles and holidays.
 
-    The station list (its ``station`` codes, coordinates and neighbours) comes from
-    every loaded snapshot, or only from the files of ``station_files`` (file months),
-    so loading more months cannot change the codes a model was trained with. Stations
-    outside that list get no features, so their rows drop out.
+    The station list (codes, coordinates, neighbours) comes from all loaded snapshots, or
+    only from the ``station_files`` file months. Pin it to the training files: more
+    months must not change the station codes of a trained model. Stations outside the
+    list get no features.
     """
     con.register("flow_src", flow.to_arrow())
     con.register("weather_src", weather.to_arrow())
@@ -161,9 +167,11 @@ def prepare_shared(
     )
 
 
-def _lag_sql(lag: int, window: str) -> tuple[list[str], str, str, str]:
+def _lag_sql(
+    lag: int, window: str, tolerance_min: float = LAG_TOLERANCE_MIN
+) -> tuple[list[str], str, str, str]:
     """(joins, ok condition, docks expr, is_full expr) for the reading 'lag' min ago."""
-    tol = int(LAG_TOLERANCE_MIN * 60)
+    tol = int(tolerance_min * 60)
     target = f"e.t - INTERVAL ({lag * 60}) SECOND"
     p = f"l{lag}"
     before = f"ASOF LEFT JOIN snap {p} ON {p}.sid = e.sid AND {p}.t <= {target}"
@@ -173,7 +181,7 @@ def _lag_sql(lag: int, window: str) -> tuple[list[str], str, str, str]:
     n = f"n{lag}"
     after = f"ASOF LEFT JOIN snap {n} ON {n}.sid = e.sid AND {n}.t >= {target}"
     n_ok = f"({n}.t <= {target} + INTERVAL ({tol}) SECOND AND {n}.ok)"
-    # Nearest of the two; ties go to the earlier reading.
+    # Use the nearer reading. If equal, use the earlier one.
     use_p = f"({p_ok} AND (NOT coalesce({n_ok}, false) OR {target} - {p}.t <= {n}.t - ({target})))"
     ok = f"(coalesce({p_ok}, false) OR coalesce({n_ok}, false))"
     pick = lambda col: f"CASE WHEN {use_p} THEN {p}.{col} ELSE {n}.{col} END"  # noqa: E731
@@ -185,16 +193,22 @@ def build(
     horizon_min: int,
     source: str | None = None,
     lag_window: str = "trailing",
+    lags: tuple[int, ...] = LAGS_MIN,
+    lag_tolerance_min: float = LAG_TOLERANCE_MIN,
+    out: str | None = None,
 ) -> str:
-    """Create ``feat_{h}``: the source's columns (``ex_{h}`` by default, or e.g.
-    ``pred_{h}`` to carry baseline predictions along) plus FEATURES. ``lag_window``
-    picks how lagged readings are matched (LAG_WINDOWS)."""
+    """Create ``out`` (default ``feat_{h}``): the ``source`` columns (default ``ex_{h}``)
+    plus ``features(lags)``. Return its name.
+
+    ``lag_window`` (LAG_WINDOWS) and ``lag_tolerance_min`` set how a lagged reading is
+    matched. The defaults are for the ~15-min MaxHalford readings. The 2-min captures
+    allow short lags with a small tolerance."""
     if lag_window not in LAG_WINDOWS:
         raise ValueError(f"lag_window must be one of {LAG_WINDOWS}")
-    ex, out = source or f"ex_{horizon_min}", f"feat_{horizon_min}"
+    ex, out = source or f"ex_{horizon_min}", out or f"feat_{horizon_min}"
     lag_joins, lag_cols = [], []
-    for lag in LAGS_MIN:
-        joins, ok, docks, full = _lag_sql(lag, lag_window)
+    for lag in lags:
+        joins, ok, docks, full = _lag_sql(lag, lag_window, lag_tolerance_min)
         lag_joins += joins
         lag_cols += [
             f"CASE WHEN {ok} THEN {docks} END AS docks_lag{lag}",

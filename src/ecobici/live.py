@@ -1,19 +1,12 @@
-"""Live predictions from our own GBFS captures, with the frozen M6 model.
+"""Live predictions on the own GBFS captures, with the frozen M6 models.
 
-A first cut of next_steps.md step 5, used by the dev viewer ``apps/predictions.py``.
-Captures are turned into the same ``snap`` table as the MaxHalford history and go
-through the same feature code (``model_matrix.build``), so serving cannot drift from
-training:
+The captures go through the training feature code (``model_matrix.build``). The station
+list, the station profiles and the saturated stations come from the M6 months. Weather
+comes from the Open-Meteo live forecast: the live version of the training source.
 
-- the station list, station profiles and saturated stations come from the MaxHalford
-  months the model was trained on, exactly as in M6;
-- lags read the captures of the last ~70 min;
-- weather is Open-Meteo's live forecast, the serving side of the historical
-  forecasts used in training.
-
-Calibration: the global isotonic map, then the static VAL_FIT Platt on
-saturated_peak rows. That is what the frozen ``p_lgbm_sub_roll`` does until the
-captures hold enough labelled peaks for its weekly refit (~1.5 weeks).
+Calibration: the global isotonic map, then the static VAL_FIT Platt map on
+saturated_peak rows. ``p_lgbm_sub_roll`` uses the static map until the captures hold
+~1.5 weeks of labelled peaks.
 """
 
 import json
@@ -38,14 +31,13 @@ from ecobici.ingest import maxhalford
 from ecobici.models import lgbm
 
 FORECAST_API = "https://api.open-meteo.com/v1/forecast"
-# Longest lag (60 min) plus its tolerance, with a little room.
 LOOKBACK = timedelta(minutes=model_matrix.LAGS_MIN[-1] + model_matrix.LAG_TOLERANCE_MIN + 2)
-MODEL_FILES = (*TRAIN, *VALIDATION)  # the months M6 was trained and calibrated on
+MODEL_FILES = (*TRAIN, *VALIDATION)  # The M6 training and calibration months.
 
 
 @dataclass(frozen=True)
 class Frozen:
-    """One horizon's frozen artifacts (written by model_report)."""
+    """The frozen artifacts of one horizon, as ``model_report`` writes them."""
 
     booster: lgb.Booster
     iso_x: np.ndarray
@@ -53,8 +45,8 @@ class Frozen:
     platt: lgbm.Platt
 
     def predict(self, X: np.ndarray, subgroup: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """(p_lgbm, frozen model with the static subgroup map)."""
-        # Same as IsotonicRegression(out_of_bounds="clip").predict.
+        """Return ``p_lgbm``, and ``p_lgbm`` with the static Platt map on ``subgroup``."""
+        # Same result as IsotonicRegression(out_of_bounds="clip").predict.
         p = np.interp(self.booster.predict(X), self.iso_x, self.iso_y)
         q = p.copy()
         q[subgroup] = self.platt.predict(p[subgroup])
@@ -82,8 +74,8 @@ def model_files(root: Path = maxhalford.DEFAULT_DIR) -> list[Path]:
 def saturated_by_horizon(
     files: list[Path], horizons=HORIZONS, target: str = "full"
 ) -> dict[int, list[str]]:
-    """M6's saturated stations per horizon (for ``empty``: often drained at the peak),
-    recomputed from the TRAIN months (same SQL)."""
+    """The M6 saturated stations per horizon, from the TRAIN months. For ``empty``, the
+    stations that are often empty at the peak."""
     con = duckdb.connect()
     targets.load_snapshots(con, [f for f in files if f.stem in TRAIN], target=target)
     out = {}
@@ -107,9 +99,13 @@ def recent_captures(root: Path, at: datetime | None = None) -> list[Path]:
     return [f for f in files if at - LOOKBACK < fetched_at(f) <= at]
 
 
-def capture_rows(paths: list[Path], information: dict) -> pl.DataFrame:
-    """Captures in the MaxHalford snapshot schema, so ``targets.load_snapshots`` reads
-    them unchanged. Capacity and coordinates come from station_information."""
+def capture_rows(paths: list[Path], information: dict, drop_stale: bool = False) -> pl.DataFrame:
+    """The captures in the MaxHalford snapshot schema. Capacity and coordinates come
+    from ``information``.
+
+    ``drop_stale`` removes the readings of stations that did not report for
+    ``config.STALE_AFTER_SECONDS``. Use it for training: a stale reading must not become
+    a label."""
     info = pl.DataFrame(
         [
             {"station_id": s["station_id"], **{k: s.get(k) for k in ("capacity", "lat", "lon")}}
@@ -125,11 +121,15 @@ def capture_rows(paths: list[Path], information: dict) -> pl.DataFrame:
     frames = []
     for path in paths:
         status = gbfs.read_capture(path)
-        frames.append(
-            gbfs.frame(status["data"]["stations"], gbfs.STATUS_SCHEMA).with_columns(
-                committed_at_utc=pl.lit(fetched_at(path)).cast(pl.Datetime("us", "UTC"))
-            )
+        rows = gbfs.frame(status["data"]["stations"], gbfs.STATUS_SCHEMA).with_columns(
+            committed_at_utc=pl.lit(fetched_at(path)).cast(pl.Datetime("us", "UTC"))
         )
+        if drop_stale:
+            age = int(status["last_updated"]) - pl.col("last_reported")
+            rows = rows.filter(
+                age.fill_null(config.STALE_AFTER_SECONDS + 1) <= config.STALE_AFTER_SECONDS
+            )
+        frames.append(rows)
     return (
         pl.concat(frames)
         .join(info, on="station_id", how="inner")
@@ -167,7 +167,7 @@ def forecast_weather(
     )
     resp.raise_for_status()
     hourly = resp.json()["hourly"]
-    # JSON numbers may mix ints and floats (or be null) within a column.
+    # A column can mix ints, floats and nulls.
     return pl.DataFrame(
         {k: hourly[k] for k in ("time", "temperature_2m", "precipitation")},
         schema={"time": pl.String, "temperature_2m": pl.Float64, "precipitation": pl.Float64},
@@ -190,17 +190,18 @@ def predict(
     duckdb_memory: str = "6GB",
     target: str = "full",
 ) -> pl.DataFrame:
-    """P(full at t + h) for every in-service station at the latest capture t.
+    """P(``target`` state at t + h) for each in-service station at the last capture t.
 
-    One row per station: ``sid``, ``t``, and per horizon ``p_full_{h}`` (frozen model),
-    ``p_lgbm_{h}`` (without the subgroup map) and ``subgroup_{h}`` (saturated_peak).
+    One row per station: ``sid``, ``t`` and, per horizon, ``p_full_{h}`` (frozen model),
+    ``p_lgbm_{h}`` (no subgroup map) and ``subgroup_{h}``. For ``empty``, ``p_full_{h}``
+    holds P(empty).
     """
     if not captures:
         raise ValueError("no captures")
     at = fetched_at(captures[-1])
     con = duckdb.connect(config={"memory_limit": duckdb_memory})
     with tempfile.TemporaryDirectory() as tmp:
-        # The name keeps it out of MODEL_FILES, so it never feeds the station list.
+        # This file month is not in MODEL_FILES, so it does not change the station list.
         live = Path(tmp) / f"live_{at:%Y-%m}.parquet"
         capture_rows(captures, information).write_parquet(live)
         targets.load_snapshots(con, [*history_files, live], target=target)

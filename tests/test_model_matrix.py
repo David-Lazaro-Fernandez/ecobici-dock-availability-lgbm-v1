@@ -248,3 +248,49 @@ def test_station_list_can_be_pinned_to_files(tmp_path):
         ("A", 0),
         ("B", 1),
     ]
+
+
+def test_short_lags_with_a_tight_tolerance_on_2min_readings(tmp_path):
+    # Readings every 2 min; at t = 10 min the 2- and 4-min lags are the readings at 8 and 6.
+    snaps = [
+        {
+            "station_id": "A",
+            "committed_at_utc": T0 + timedelta(minutes=m),
+            "is_installed": True,
+            "is_returning": True,
+            "num_docks_available": d,
+            "num_bikes_available": 20 - d,
+            "num_docks_disabled": 0,
+            "capacity": 20,
+            "latitude": 19.43,
+            "longitude": -99.2,
+        }
+        for m, d in ((0, 9), (2, 8), (4, 7), (6, 6), (8, 5), (10, 4), (12, 3), (14, 2), (16, 1))
+    ]
+    path = tmp_path / "2026-10-07.parquet"
+    pl.DataFrame(snaps).write_parquet(path)
+    con = duckdb.connect()
+    targets.load_snapshots(con, [path])
+    flow = pl.DataFrame(
+        schema={
+            "station_id": pl.String,
+            "slot": pl.Int64,
+            "weekend": pl.Boolean,
+            "arrivals_mean": pl.Float64,
+            "departures_mean": pl.Float64,
+            "net_flow_mean": pl.Float64,
+        }
+    )
+    weather = pl.DataFrame({"time_utc": [T0], "temperature_2m": [15.0], "precipitation": [0.0]})
+    mm.prepare_shared(con, flow, weather)
+    targets.build_examples(con, 5, tolerance_min=1.0)
+    out = mm.build(con, 5, lags=(2, 4), lag_window="centered", lag_tolerance_min=1.0, out="short")
+    assert out == "short"
+    r = con.execute(
+        "SELECT docks_lag2, docks_lag4, docks_delta2, y FROM short WHERE t = ?",
+        [T0 + timedelta(minutes=10)],
+    ).fetchone()
+    # Label: the reading within ±1 min of t + 5 → the one at 14 min (2 docks: not full).
+    assert r == (5, 6, -1, False)
+    assert set(mm.features((2, 4))) >= {"docks_lag2", "full_lag4"}
+    assert "docks_lag15" not in mm.features((2, 4))

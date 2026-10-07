@@ -40,14 +40,18 @@ EARLY_STOPPING = 100
 
 
 def matrix(
-    con: duckdb.DuckDBPyConnection, table: str, months: tuple[str, ...], extra: list[str] = ()
+    con: duckdb.DuckDBPyConnection,
+    table: str,
+    months: tuple[str, ...],
+    extra: list[str] = (),
+    features: list[str] = FEATURES,
 ) -> tuple[np.ndarray, np.ndarray, pl.DataFrame]:
     """(X float32, y, metadata) for the given months. Booleans become 0/1. Metadata
     holds y plus sid, target_slot, weekend and any ``extra`` columns."""
     # Prefixed so features that are also metadata (target_slot, weekend) don't collide.
-    feat_cols = [f"f__{f}" for f in FEATURES]
+    feat_cols = [f"f__{f}" for f in features]
     feats = ", ".join(
-        f"CAST({f} AS FLOAT) AS {c}" for f, c in zip(FEATURES, feat_cols, strict=True)
+        f"CAST({f} AS FLOAT) AS {c}" for f, c in zip(features, feat_cols, strict=True)
     )
     meta_cols = ", ".join(["sid", "target_slot", "weekend", *extra])
     df = con.execute(
@@ -83,11 +87,16 @@ class Model:
 
 
 def train(
-    X: np.ndarray, y: np.ndarray, X_fit: np.ndarray, y_fit: np.ndarray, params: dict = PARAMS
+    X: np.ndarray,
+    y: np.ndarray,
+    X_fit: np.ndarray,
+    y_fit: np.ndarray,
+    params: dict = PARAMS,
+    features: list[str] = FEATURES,
 ) -> Model:
     """Train on (X, y); early-stop and calibrate on the held-out (X_fit, y_fit)."""
-    cat = [FEATURES.index(c) for c in CATEGORICAL]
-    dtrain = lgb.Dataset(X, y, feature_name=FEATURES, categorical_feature=cat, free_raw_data=True)
+    cat = [features.index(c) for c in CATEGORICAL]
+    dtrain = lgb.Dataset(X, y, feature_name=features, categorical_feature=cat, free_raw_data=True)
     dval = lgb.Dataset(X_fit, y_fit, reference=dtrain)
     booster = lgb.train(
         params,
@@ -105,7 +114,8 @@ def importance(model: Model, top: int = 15) -> list[tuple[str, float]]:
     """Share of total split gain per feature."""
     gain = model.booster.feature_importance(importance_type="gain")
     total = gain.sum() or 1.0
-    ranked = sorted(zip(FEATURES, gain / total, strict=True), key=lambda kv: -kv[1])
+    names = model.booster.feature_name()
+    ranked = sorted(zip(names, gain / total, strict=True), key=lambda kv: -kv[1])
     return ranked[:top]
 
 

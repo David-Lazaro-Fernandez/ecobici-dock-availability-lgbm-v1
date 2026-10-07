@@ -1,21 +1,17 @@
-"""Examples (station, t, horizon) → full at t + horizon, from MaxHalford snapshots.
+"""Examples (station, t, horizon) → target state at t + horizon, from snapshots.
 
-The target is the station's state at the first snapshot within ±``tolerance`` of
-t + h (M2: cadence ~15 min, so 7.5 min keeps it inside one slot). Readings where the
-station is out of service at either end are dropped: "full" must never stand in for
-an outage. Built in DuckDB; one row per example.
+The label is the first snapshot within ±``tolerance`` of t + h (M2: the cadence is
+~15 min, so 7.5 min stays inside one slot). Rows out of service at t or at t + h are
+removed: "full" must not stand for an outage.
 
-``target`` picks the state being predicted, and every "full" column then holds it:
+``target`` sets the predicted state:
 
-- ``full`` (M6, the frozen model): no free dock, so a returning bike cannot dock. In
-  service = installed and accepting returns.
-- ``empty``: no bike to take. In service = installed only: in MaxHalford, ``is_renting``
-  is false on almost every empty reading (it tracks "no bikes", not an outage), so
-  filtering on it would drop the very cases to predict.
+- ``full`` (M6, the frozen model): no free dock. In service: installed and returning.
+- ``empty``: no bike to take. In service: installed only. In MaxHalford, ``is_renting``
+  is false on almost all empty readings, so it marks "no bikes", not an outage.
 
-Column and feature names keep "full" (``is_full``, ``full_now``, ``full_lag15``,
-``nb_full_frac``, ``st_full_rate``…) because they are baked into the frozen booster;
-for ``empty`` they mean the empty state.
+The names keep "full" (``is_full``, ``full_now``, ``full_lag15``, ``nb_full_frac``…)
+because they are in the frozen booster. For ``empty``, they mean "empty".
 """
 
 from pathlib import Path
@@ -60,9 +56,9 @@ def load_snapshots(con: duckdb.DuckDBPyConnection, files: list[Path], target: st
     )
 
 
-def _example_cols(horizon_min: int) -> str:
-    """Everything an example knows at t (``now`` is a snap row), shared by training
-    examples and live predictions."""
+def example_cols(horizon_min: int) -> str:
+    """The columns an example knows at t (``now`` is a snap row). Training examples and
+    live predictions share them."""
     return f"""now.sid, now.t, now.month,
                (extract(hour FROM now.t) * 60 + extract(minute FROM now.t)) // 15 AS slot,
                -- Slot and day type at *arrival* (t + h): where the dock is contested.
@@ -75,10 +71,13 @@ def _example_cols(horizon_min: int) -> str:
                now.capacity"""
 
 
-def build_examples(con: duckdb.DuckDBPyConnection, horizon_min: int) -> None:
+def build_examples(
+    con: duckdb.DuckDBPyConnection, horizon_min: int, tolerance_min: float = TOLERANCE_MIN
+) -> None:
     """Table ``ex_{h}``: sid, t, month, slot, target_slot, weekend (at arrival),
-    full_now, docks_now, capacity, y."""
-    h_s, tol_s = horizon_min * 60, int(TOLERANCE_MIN * 60)
+    full_now, docks_now, capacity, y. The label is the first reading within
+    ±``tolerance_min`` of t + h (7.5 for ~15-min readings; ~1 for the 2-min captures)."""
+    h_s, tol_s = horizon_min * 60, int(tolerance_min * 60)
     con.execute(
         f"""
         CREATE OR REPLACE TABLE ex_{horizon_min} AS
@@ -86,7 +85,7 @@ def build_examples(con: duckdb.DuckDBPyConnection, horizon_min: int) -> None:
             SELECT *, t + INTERVAL ({h_s - tol_s}) SECOND AS lo
             FROM snap WHERE ok
         )
-        SELECT {_example_cols(horizon_min)},
+        SELECT {example_cols(horizon_min)},
                fut.is_full AS y
         FROM now
         ASOF JOIN snap fut ON fut.sid = now.sid AND fut.t >= now.lo
@@ -97,13 +96,13 @@ def build_examples(con: duckdb.DuckDBPyConnection, horizon_min: int) -> None:
 
 
 def build_now(con: duckdb.DuckDBPyConnection, horizon_min: int, at) -> str:
-    """Table ``now_{h}``: like ``ex_{h}`` for every in-service station at the snapshot
-    ``at``, with no label yet (y is NULL). Returns its name."""
+    """Table ``now_{h}``: like ``ex_{h}``, for each in-service station at the snapshot
+    ``at``, with no label (y is NULL). Return its name."""
     out = f"now_{horizon_min}"
     con.execute(
         f"""
         CREATE OR REPLACE TABLE {out} AS
-        SELECT {_example_cols(horizon_min)}, NULL::BOOLEAN AS y
+        SELECT {example_cols(horizon_min)}, NULL::BOOLEAN AS y
         FROM snap now WHERE now.ok AND now.t = ?
         """,
         [at],
