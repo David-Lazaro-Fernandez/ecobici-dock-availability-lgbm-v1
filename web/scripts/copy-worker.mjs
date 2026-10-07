@@ -1,5 +1,5 @@
-// MapLibre 6 loads its worker from next to its own module URL. Bundled by Next, that file is not there ("worker
-// failed to load"), so the installed worker is copied to public/ and the map points to it with setWorkerUrl.
+// MapLibre 6 loads its worker from next to its module. After the Next bundle, the worker is not there ("worker
+// failed to load"). Copy it to public/; the map sets it with setWorkerUrl.
 import { copyFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';

@@ -1,15 +1,15 @@
 'use client';
 
-// The trip planner, on the skeleton of a-donde-ir's recommender: a full-height stage with the map under the top bar,
-// a veil and a centred title until there is a start, and a dock with one search bar that slides to the foot once the
-// start is set. One bar edits one end of the trip at a time (From, then To; the chips above it switch). A card at the
-// top left lists where to drop the bike, best first. Data from ecobici.api; the map from trip-map.tsx.
+// The trip planner, on the a-donde-ir recommender skeleton: stage, dock with one search bar, and a card with the
+// stations. The search bar edits one end of the trip at a time (From, then To).
 
 import dynamic from 'next/dynamic';
 import { type CSSProperties, type SyntheticEvent, type KeyboardEvent, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { type Candidate, type PlanResponse, type StationsResponse, useApi } from '@/lib/api';
-import { type Suggestion, bbox, geocode, plain, searchStations } from '@/lib/places';
-import { Close, Dock, Locate, Pin, Send, Sliders, Walk } from '@/components/icons';
+import { type PlacesFile, type Suggestion, bbox, buildIndex, cachedOnline, geocode, loadPlaces, merge, plain, searchPlaces } from '@/lib/places';
+import { Clock, Close, Dock, Locate, Pin, Send, Sliders, Walk } from '@/components/icons';
+import { type SortKey, sortCandidates } from '@/lib/sort';
+import { type Leg, useTripRoutes } from '@/lib/routes';
 import { FREE_STEPS } from '@/components/trip-map';
 
 const TripMap = dynamic(() => import('@/components/trip-map'), { ssr: false });
@@ -21,11 +21,11 @@ const FAILURE_COSTS = [5, 7.5, 10];
 const ONLINE_MIN_CHARS = 3;
 const SUGGEST_WAIT_MS = 250;
 const SUGGEST_LIMIT = 5;
-// How much of the map the docked bar and the card cover (desktop), so the camera frames the rest.
+// The map area under the docked bar and the card (desktop). The camera frames the rest.
 const DOCK_OVERLAP = 170;
 const CARD_WIDTH = 420;
 const TZ = 'America/Mexico_City';
-const clock = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
+const clock = new Intl.DateTimeFormat('es-MX', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: TZ });
 const FREE_LEGEND = ['< 50 %', '50–80 %', '80–95 %', '≥ 95 %'];
 
 type End = 'from' | 'to';
@@ -35,11 +35,13 @@ const pct = (p: number | null) => (p == null ? '—' : `${Math.round(p * 100)} %
 const minutes = (m: number) => `${Math.max(1, Math.round(m))} min`;
 const meters = (m: number) => (m < 950 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(1)} km`);
 const shortName = (name: string) => name.replace(/^CE-\d+\s*/, '');
-// Some stations share a name ("Liverpool - Génova" twice): the code tells them apart.
+// Some stations have the same name ("Liverpool - Génova" twice). The code tells them apart.
 const Code = ({ code }: { code: string }) => <span className="code">{code}</span>;
-const whyNoBike = (s: { state: string; bikes: number | null }) =>
-  s.state === 'unavailable' ? 'is out of service' : s.state === 'stale' ? 'is not reporting' : 'has no bikes right now';
+const whyNoBike = (s: { state: string }) =>
+  s.state === 'unavailable' ? 'está fuera de servicio' : s.state === 'stale' ? 'no envía datos recientes' : 'no tiene bicis ahora';
 const band = (p: number | null) => (p == null ? 'none' : String(FREE_STEPS.filter((s) => p >= s).length));
+// Show the risk of an empty pickup only when it can change the decision.
+const EMPTY_RISK_SHOWN = 0.1;
 
 const PHONE = '(max-width: 700px)';
 function usePhone() {
@@ -54,24 +56,55 @@ function usePhone() {
   );
 }
 
-function Best({ c, walkToPickup }: { c: Candidate; walkToPickup: number }) {
-  return (
-    <div className={`card__pick ${c.rank === 1 ? 'is-best' : ''}`}>
-      <span className="card__rank">{c.rank}</span>
-      <div className="card__pick-body">
-        <strong>
-          {shortName(c.name)} <Code code={c.code} />
-        </strong>
-        <span className="muted">
-          Arrive ~{clock.format(new Date(c.arrive_at))} · ride {minutes(c.ride_min)} · then walk {meters(c.walk_m)}
-          {c.expected_min != null && ` · ~${minutes(walkToPickup + c.expected_min)} expected`}
+const SORTS: { key: SortKey; label: string; hint: string; icon: () => React.JSX.Element }[] = [
+  { key: 'time', label: 'Tiempo', hint: 'Ordenar por tiempo de viaje', icon: Clock },
+  { key: 'walk', label: 'Caminar', hint: 'Ordenar por distancia a pie al destino', icon: Walk },
+  { key: 'free', label: 'Disponibilidad', hint: 'Ordenar por probabilidad de lugar libre', icon: Dock },
+];
+
+function routeText(legs: Leg[]) {
+  const bike = legs.find((l) => l.mode === 'bike');
+  const walk = legs.at(-1)?.mode === 'walk' ? legs.at(-1) : undefined;
+  const approx = (l: Leg) => (l.routed ? '' : '~');
+  const parts = [];
+  if (bike) parts.push(`En bici ${approx(bike)}${meters(bike.distance_m)}${bike.duration_min != null ? ` (${minutes(bike.duration_min)})` : ''}`);
+  if (walk) parts.push(`a pie ${approx(walk)}${meters(walk.distance_m)}`);
+  return parts.join(' · ');
+}
+
+function Row({ c, selected, route, onSelect }: { c: Candidate; selected: boolean; route: string; onSelect: () => void }) {
+  if (!c.recommendable)
+    return (
+      <li className="row is-muted">
+        <span className="row__rank" aria-hidden="true" />
+        <span className="row__body">
+          <strong>
+            {shortName(c.name)} <Code code={c.code} />
+          </strong>
+          <span className="muted">{c.state === 'stale' ? 'Sin datos recientes' : 'Fuera de servicio'}</span>
         </span>
-      </div>
-      <span className="card__chance">
-        <i className={`swatch swatch--${band(c.p_free)}`} aria-hidden="true" />
-        {pct(c.p_free)}
-      </span>
-    </div>
+      </li>
+    );
+  return (
+    <li>
+      <button type="button" className={`row ${selected ? 'is-selected' : ''} ${c.rank === 1 ? 'is-best' : ''}`} aria-pressed={selected} onClick={onSelect}>
+        <span className="row__rank">{c.rank}</span>
+        <span className="row__body">
+          <strong>
+            {shortName(c.name)} <Code code={c.code} />
+            {c.rank === 1 && <span className="row__tag">Mejor</span>}
+          </strong>
+          <span className="muted">
+            Llegas {clock.format(new Date(c.arrive_at))} · {meters(c.walk_m)} a pie
+          </span>
+          {selected && route && <span className="row__route">{route}</span>}
+        </span>
+        <span className="card__chance">
+          <i className={`swatch swatch--${band(c.p_free)}`} aria-hidden="true" />
+          {pct(c.p_free)}
+        </span>
+      </button>
+    </li>
   );
 }
 
@@ -90,6 +123,9 @@ export function Planner() {
   const [cardOpen, setCardOpen] = useState(true);
   const [radius, setRadius] = useState(500);
   const [failure, setFailure] = useState(7.5);
+  const [sortBy, setSortBy] = useState<SortKey>('time');
+  // The drop-off picked in the list or on the map, for one search only.
+  const [picked, setPicked] = useState<{ searchKey: string; id: string } | null>(null);
   const [tick, setTick] = useState(0);
   const located = start !== null;
 
@@ -101,6 +137,11 @@ export function Planner() {
   const live = useApi<StationsResponse>('/v1/stations', useMemo(() => new URLSearchParams(), []), tick || null, 0);
   const stations = live.data?.stations ?? [];
   const box = useMemo(() => bbox(stations), [stations.length]);
+  const [placesFile, setPlacesFile] = useState<PlacesFile | null>(null);
+  useEffect(() => {
+    loadPlaces().then(setPlacesFile);
+  }, []);
+  const index = useMemo(() => buildIndex(placesFile, stations), [placesFile, stations.length]);
   const near = start ?? CDMX;
 
   const planParams = useMemo(() => {
@@ -116,32 +157,34 @@ export function Planner() {
   const plan = useApi<PlanResponse>('/v1/plan', planParams, tick || null);
   const result = planParams ? plan.data : null;
   const ranked = result?.candidates.filter((c) => c.rank != null) ?? [];
-  const walkToPickup = result?.pickup.walk_min ?? 0;
+  const searchKey = planParams ? String(planParams) : '';
+  const dropoff = ranked.find((c) => picked?.searchKey === searchKey && c.id === picked.id) ?? ranked[0] ?? null;
+  const legs = useTripRoutes(start, result?.pickup ?? null, dropoff, goal);
+  const selectDropoff = (id: string) => {
+    if (ranked.some((c) => c.id === id)) setPicked({ searchKey, id });
+  };
   const showCard = Boolean(start && goal && cardOpen && (result || plan.loading));
 
-  // Suggestions for the text in the bar: stations at once, addresses after a pause.
+  // Suggestions: the local index and saved answers at once, Photon after a pause.
   useEffect(() => {
     if (!typing) return setSuggestions([]);
-    const local = searchStations(stations, text, 3);
-    setSuggestions(local);
+    const local = searchPlaces(index, text, near, SUGGEST_LIMIT);
+    setSuggestions(merge(text, local, cachedOnline(text, near, SUGGEST_LIMIT), SUGGEST_LIMIT));
     setActive(0);
     if (plain(text).length < ONLINE_MIN_CHARS) return;
     const ctrl = new AbortController();
     const t = setTimeout(() => {
       geocode(text, near, box, SUGGEST_LIMIT, ctrl.signal)
-        .then((remote) => {
-          const seen = new Set(local.map((s) => plain(s.name)));
-          setSuggestions([...local, ...remote.filter((s) => !seen.has(plain(s.name)))].slice(0, SUGGEST_LIMIT));
-        })
+        .then((online) => setSuggestions(merge(text, local, online, SUGGEST_LIMIT)))
         .catch(() => {
-          if (!ctrl.signal.aborted) setNotice('Address search is not reachable right now. Station names still work.');
+          if (!ctrl.signal.aborted) setNotice('La búsqueda de direcciones no responde. Los lugares conocidos sí funcionan.');
         });
     }, SUGGEST_WAIT_MS);
     return () => {
       clearTimeout(t);
       ctrl.abort();
     };
-  }, [text, typing, stations.length, box, near.lat, near.lng]);
+  }, [text, typing, index, box, near.lat, near.lng]);
 
   function set(end: End, p: Picked | null) {
     if (end === 'from') setStart(p);
@@ -167,25 +210,25 @@ export function Planner() {
     try {
       const [first] = await geocode(text, near, box, 1);
       if (first) choose(first);
-      else setNotice('No match inside the Ecobici area. Try adding the neighbourhood (colonia).');
+      else setNotice('No hay resultados en la zona de Ecobici. Agrega la colonia.');
     } catch {
-      setNotice('Address search is not reachable right now. Station names still work.');
+      setNotice('La búsqueda de direcciones no responde. Los lugares conocidos sí funcionan.');
     } finally {
       setBusy(false);
     }
   }
 
   function locate() {
-    if (!navigator.geolocation) return setNotice('This browser cannot share its location.');
+    if (!navigator.geolocation) return setNotice('Este navegador no comparte la ubicación.');
     setBusy(true);
     navigator.geolocation.getCurrentPosition(
       (p) => {
         setBusy(false);
-        set('from', { lat: p.coords.latitude, lng: p.coords.longitude, label: 'My location' });
+        set('from', { lat: p.coords.latitude, lng: p.coords.longitude, label: 'Mi ubicación' });
       },
       () => {
         setBusy(false);
-        setNotice('Location is blocked or unavailable. Type an address instead.');
+        setNotice('La ubicación está bloqueada o no está disponible. Escribe una dirección.');
       },
       { enableHighAccuracy: true, timeout: 10_000 },
     );
@@ -205,20 +248,20 @@ export function Planner() {
   const status = live.error
     ? live.error
     : captured
-      ? `Live · stations read at ${clock.format(captured)}${ageMin! > 10 ? ` (${Math.round(ageMin!)} min ago)` : ''}`
-      : 'Loading live stations…';
+      ? `En vivo · estaciones leídas a las ${clock.format(captured)}${ageMin! > 10 ? ` (hace ${Math.round(ageMin!)} min)` : ''}`
+      : 'Cargando estaciones…';
 
   const context = !start
     ? ''
     : !goal
-      ? 'Now, where are you going? Type it, or double click the map.'
+      ? 'Ahora, ¿a dónde vas? Escríbelo o haz doble clic en el mapa.'
       : plan.error
         ? plan.error
         : !result
-          ? 'Planning…'
-          : ranked.length === 0
-            ? 'No station near the destination can be recommended right now.'
-            : `${result.requested ? `No bikes to take at ${shortName(result.requested.name)}. ` : ''}Take a bike at ${shortName(result.pickup.name)}${result.pickup.walk_m > 0 ? ` (${meters(result.pickup.walk_m)} away)` : ''} · drop it at ${shortName(ranked[0].name)}: ${pct(ranked[0].p_free)} chance of a free dock`;
+          ? 'Calculando…'
+          : !dropoff
+            ? 'Ahora no se puede recomendar ninguna estación cerca del destino.'
+            : `Toma la bici en ${shortName(result.pickup.name)} y déjala en ${shortName(dropoff.name)}: ${pct(dropoff.p_free)} de encontrar lugar`;
 
   const inset = {
     top: 0,
@@ -231,9 +274,9 @@ export function Planner() {
     <div className={`menu ${menu ? 'is-open' : ''}`} aria-hidden={!menu}>
       <div className="menu__row">
         <span className="menu__label">
-          <Walk /> Max walk to your destination
+          <Walk /> Máximo a pie hasta tu destino
         </span>
-        <div className="chips" role="radiogroup" aria-label="Max walk">
+        <div className="chips" role="radiogroup" aria-label="Máximo a pie">
           {RADII.map((r) => (
             <button key={r} type="button" role="radio" aria-checked={radius === r} className={`chip ${radius === r ? 'is-on' : ''}`} onClick={() => setRadius(r)}>
               {meters(r)}
@@ -243,9 +286,9 @@ export function Planner() {
       </div>
       <div className="menu__row">
         <span className="menu__label">
-          <Dock /> Minutes lost if the station is full
+          <Dock /> Minutos perdidos si la estación está llena
         </span>
-        <div className="chips" role="radiogroup" aria-label="Failure cost">
+        <div className="chips" role="radiogroup" aria-label="Minutos perdidos">
           {FAILURE_COSTS.map((f) => (
             <button key={f} type="button" role="radio" aria-checked={failure === f} className={`chip ${failure === f ? 'is-on' : ''}`} onClick={() => setFailure(f)}>
               {f} min
@@ -259,7 +302,7 @@ export function Planner() {
   return (
     <>
       <header className="topbar">
-        <span className="topbar__brand">Dock finder</span>
+        <span className="topbar__brand">Lugar libre</span>
         <span className={`topbar__status ${live.error ? 'is-error' : ageMin != null && ageMin > 10 ? 'is-old' : ''}`}>{status}</span>
       </header>
 
@@ -273,25 +316,28 @@ export function Planner() {
             pickup={result?.pickup ?? null}
             candidates={result?.candidates ?? []}
             radiusM={radius}
+            legs={legs}
+            selectedId={dropoff?.id ?? null}
+            onSelect={selectDropoff}
             inset={inset}
-            onPickGoal={(p) => set('to', { ...p, label: 'Point on the map' })}
+            onPickGoal={(p) => set('to', { ...p, label: 'Punto en el mapa' })}
           />
         </div>
         {/* Without a start, the veil covers the map and blocks its clicks. */}
         <div className="stage__glass" aria-hidden="true" />
 
-        {!located && <h1 className="stage__title">Where are you riding to?</h1>}
+        {!located && <h1 className="stage__title">¿A dónde vas en bici?</h1>}
 
         {showCard && (
-          <aside className="card" aria-label="Where to drop the bike" aria-busy={plan.loading}>
+          <aside className="card" aria-label="Dónde dejar la bici" aria-busy={plan.loading}>
             <div className="card__head">
               <div>
-                <strong>Where to drop the bike</strong>
+                <strong>Dónde dejar la bici</strong>
                 <span className="muted">
-                  {result ? `${result.candidates.length} stations within ${meters(result.radius_m)} of your destination` : 'Planning…'}
+                  {result ? `${result.candidates.length} estaciones a ${meters(result.radius_m)} o menos de tu destino` : 'Calculando…'}
                 </span>
               </div>
-              <button type="button" className="icon-btn" aria-label="Close" onClick={() => setCardOpen(false)}>
+              <button type="button" className="icon-btn" aria-label="Cerrar" onClick={() => setCardOpen(false)}>
                 <Close />
               </button>
             </div>
@@ -312,67 +358,55 @@ export function Planner() {
                   <p>
                     {result.requested && (
                       <span className="card__warn">
-                        {shortName(result.requested.name)} <Code code={result.requested.code} /> {whyNoBike(result.requested)}.
-                        The nearest station with bikes is:
+                        {shortName(result.requested.name)} {whyNoBike(result.requested)}.
                       </span>
                     )}
-                    Take a bike at{' '}
-                    <strong>
-                      {shortName(result.pickup.name)} <Code code={result.pickup.code} />
-                    </strong>
+                    Toma la bici en <strong>{shortName(result.pickup.name)}</strong> <Code code={result.pickup.code} />
                     <span className="muted">
-                      {result.pickup.walk_m > 0 ? `${meters(result.pickup.walk_m)} walk (${minutes(result.pickup.walk_min)}) · ` : ''}
-                      {result.pickup.bikes ?? '—'} bikes now
-                      {result.pickup.walk_m > 0 && result.pickup.p_empty_at_arrival != null &&
-                        ` · ${pct(1 - result.pickup.p_empty_at_arrival)} chance a bike is still there when you arrive`}
+                      {result.pickup.walk_m > 0 ? `A ${meters(result.pickup.walk_m)} · ` : ''}
+                      {result.pickup.bikes ?? '—'} bicis
+                      {(result.pickup.p_empty_at_arrival ?? 0) >= EMPTY_RISK_SHOWN &&
+                        ` · ${pct(result.pickup.p_empty_at_arrival)} de que se acaben antes de que llegues`}
                     </span>
-                    {result.pickup_options.length > 1 && (
-                      <span className="card__alts">
-                        Also near you:{' '}
-                        {result.pickup_options.slice(1).map((o, i) => (
-                          <span key={o.id}>
-                            {i > 0 && ' · '}
-                            {shortName(o.name)} <Code code={o.code} /> ({meters(o.walk_m)}, {o.bikes} bikes
-                            {o.p_empty_at_arrival != null && `, ${pct(1 - o.p_empty_at_arrival)} still there`})
-                          </span>
-                        ))}
-                      </span>
-                    )}
                   </p>
                 </div>
-                {ranked.slice(0, 2).map((c) => (
-                  <Best key={c.id} c={c} walkToPickup={walkToPickup} />
-                ))}
-                <ul className="card__list">
-                  {result.candidates
-                    .filter((c) => !(c.rank && c.rank <= 2))
-                    .map((c) => (
-                      <li key={c.id} className={c.recommendable ? '' : 'is-muted'}>
-                        <span className="card__name">
-                          {c.rank ? `${c.rank}. ` : ''}
-                          {shortName(c.name)} <Code code={c.code} />
-                          <span className="muted">
-                            {c.recommendable
-                              ? `${meters(c.walk_m)} to destination · ${c.docks ?? '—'} free now · ride ${minutes(c.ride_min)}`
-                              : c.state === 'stale'
-                                ? 'Not reporting: not recommended'
-                                : 'Out of service'}
-                          </span>
-                        </span>
-                        <span className="card__chance">
-                          <i className={`swatch swatch--${band(c.p_free)}`} aria-hidden="true" />
-                          {pct(c.p_free)}
-                        </span>
-                      </li>
-                    ))}
-                </ul>
-                <div className="card__legend" aria-label="Legend">
-                  <span>Chance of a free dock on arrival:</span>
-                  {FREE_LEGEND.map((l, i) => (
-                    <span key={l}>
-                      <i className={`swatch swatch--${i}`} aria-hidden="true" /> {l}
-                    </span>
+                <div className="sort" role="radiogroup" aria-label="Ordenar estaciones">
+                  {SORTS.map(({ key, label, hint, icon: Icon }) => (
+                    <button
+                      key={key}
+                      type="button"
+                      role="radio"
+                      aria-checked={sortBy === key}
+                      aria-label={hint}
+                      title={hint}
+                      className={`sort__btn ${sortBy === key ? 'is-on' : ''}`}
+                      onClick={() => setSortBy(key)}
+                    >
+                      <Icon />
+                      <span>{label}</span>
+                    </button>
                   ))}
+                </div>
+                <ul className="card__list">
+                  {sortCandidates(result.candidates, sortBy).map((c) => (
+                    <Row
+                      key={c.id}
+                      c={c}
+                      selected={c.id === dropoff?.id}
+                      route={c.id === dropoff?.id ? routeText(legs) : ''}
+                      onSelect={() => selectDropoff(c.id)}
+                    />
+                  ))}
+                </ul>
+                <div className="card__legend">
+                  <p className="card__legend-title">Probabilidad de lugar libre al llegar</p>
+                  <div className="card__legend-items">
+                    {FREE_LEGEND.map((l, i) => (
+                      <span key={l}>
+                        <i className={`swatch swatch--${i}`} aria-hidden="true" /> {l}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               </>
             )}
@@ -383,19 +417,19 @@ export function Planner() {
         <div className="dock">
           {menuBox}
           {located && (
-            <div className="dock__ends" role="group" aria-label="Trip">
+            <div className="dock__ends" role="group" aria-label="Viaje">
               <button type="button" className={`end ${editing === 'from' ? 'is-on' : ''}`} onClick={() => setEditing('from')}>
                 <span className="dot dot--start" aria-hidden="true" />
                 <span className="end__text">
-                  <small>From</small>
+                  <small>Desde</small>
                   {start!.label}
                 </span>
               </button>
               <button type="button" className={`end ${editing === 'to' ? 'is-on' : ''}`} onClick={() => setEditing('to')}>
                 <span className="dot dot--goal" aria-hidden="true" />
                 <span className="end__text">
-                  <small>To</small>
-                  {goal?.label ?? 'Choose a destination'}
+                  <small>Hasta</small>
+                  {goal?.label ?? 'Elige un destino'}
                 </span>
               </button>
             </div>
@@ -405,14 +439,14 @@ export function Planner() {
               <span>{context}</span>
               {start && goal && result && !cardOpen && (
                 <button type="button" className="pill pill--sm" onClick={() => setCardOpen(true)}>
-                  Show stations
+                  Ver estaciones
                 </button>
               )}
             </div>
           )}
           <div className="ask-box">
             {suggestions.length > 0 && (
-              <ul className={`suggest ${located ? '' : 'suggest--down'}`} role="listbox" id="suggest" aria-label="Suggestions">
+              <ul className={`suggest ${located ? '' : 'suggest--down'}`} role="listbox" id="suggest" aria-label="Sugerencias">
                 {suggestions.map((s, i) => (
                   <li key={`${s.lat},${s.lng},${s.name}`} role="option" aria-selected={i === active}>
                     <button
@@ -435,7 +469,7 @@ export function Planner() {
               <button
                 type="button"
                 className={`ask__icon ${menu ? 'is-on' : ''}`}
-                aria-label="Options: walking distance and failure cost"
+                aria-label="Opciones: distancia a pie y minutos perdidos"
                 aria-expanded={menu}
                 onClick={() => setMenu((m) => !m)}
               >
@@ -458,28 +492,28 @@ export function Planner() {
                 aria-controls="suggest"
                 aria-autocomplete="list"
                 autoComplete="off"
-                aria-label={editing === 'from' ? 'Where you start' : 'Where you are going'}
+                aria-label={editing === 'from' ? 'Desde dónde sales' : 'A dónde vas'}
                 placeholder={
                   editing === 'from'
                     ? located
-                      ? 'Change the start: street, place or station'
-                      : 'Where do you start? Street, place or station'
-                    : 'Where are you going? Street, place or station'
+                      ? 'Cambia el punto de partida: calle, lugar o estación'
+                      : '¿Desde dónde sales? Calle, lugar o estación'
+                    : '¿A dónde vas? Calle, lugar o estación'
                 }
               />
               {editing === 'from' && (
                 <button type="button" className="ask__locate" onClick={locate} disabled={busy}>
                   <Locate />
-                  <span>My location</span>
+                  <span>Mi ubicación</span>
                 </button>
               )}
-              <button type="submit" className="ask__send" aria-label="Search" disabled={busy || !text.trim()}>
+              <button type="submit" className="ask__send" aria-label="Buscar" disabled={busy || !text.trim()}>
                 <Send />
               </button>
             </form>
           </div>
           {(!located || notice) && (
-            <p className="stage__hint">{notice || 'Type where you start, or use your location. Then choose where you are going.'}</p>
+            <p className="stage__hint">{notice || 'Escribe desde dónde sales o usa tu ubicación. Luego elige a dónde vas.'}</p>
           )}
         </div>
       </section>

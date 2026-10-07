@@ -2,16 +2,16 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Dock finder',
+  title: 'Lugar libre',
   description:
-    'Where to drop an Ecobici bike near your destination in Mexico City, with the chance of finding a free dock when you arrive.',
+    'Dónde dejar la bici cerca de tu destino en la Ciudad de México, con la probabilidad de encontrar lugar al llegar.',
 };
 
 export const viewport: Viewport = { width: 'device-width', initialScale: 1 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="es">
       <body>{children}</body>
     </html>
   );

@@ -1,25 +1,21 @@
 'use client';
 
-// Trip map, adapted from a-donde-ir's recommender-map. Loads only in the browser (next/dynamic). MapLibre with
-// OpenFreeMap's Positron style: no key, commercial use allowed, attribution required.
-//
-// Every station is a faint dot for context. Candidates near the destination are coloured by P(free dock) on a
-// one-hue sequential ramp (light → dark = less → more likely free); rank 1 and 2 are larger and labelled. The start is
-// the only accent-filled point; the bike pickup is an accent ring and the destination an ink ring. A double click on
-// the map sets the destination; a click on a station opens its predictions. Colours come from globals.css.
+// Trip map, adapted from the a-donde-ir recommender map. It loads only in the browser (next/dynamic).
+// Basemap: OpenFreeMap Positron. No key, commercial use allowed, credit required. Colours come from globals.css.
 
 import { useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { Candidate, Pickup, Station } from '@/lib/api';
+import type { Leg } from '@/lib/routes';
 
 export const BASEMAP_STYLE = 'https://tiles.openfreemap.org/styles/positron';
-// Served from public/ (scripts/copy-worker.mjs): bundled, MapLibre cannot find its worker next to itself.
+// Served from public/ (scripts/copy-worker.mjs). When bundled, MapLibre cannot find the worker next to its module.
 const WORKER_URL = '/maplibre-gl-worker.mjs';
 const CIRCLE_STEPS = 64;
 const DOUBLE_CLICK_MS = 400;
 const DOUBLE_CLICK_PX = 12;
-// P(free dock) bands; must match the legend in planner.tsx.
+// P(free dock) bands. Keep them equal to the legend in planner.tsx.
 export const FREE_STEPS = [0.5, 0.8, 0.95];
 
 export type Point = { lat: number; lng: number };
@@ -61,22 +57,22 @@ const point = (p: Point, properties: Record<string, unknown> = {}): GeoJSON.Feat
   geometry: { type: 'Point', coordinates: [p.lng, p.lat] },
 });
 
-/** Station names come from the Ecobici feed: escape them before they go into popup HTML. */
+/** Station names come from the Ecobici feed. Escape them before they go into popup HTML. */
 const esc = (v: unknown) =>
   String(v ?? '—').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 const pct = (p: number | null | undefined) => (p == null ? '—' : `${Math.round(p * 100)} %`);
-const STATE_TEXT: Record<string, string> = { available: 'Available', full: 'Full', unavailable: 'Out of service', stale: 'Not reporting' };
+const STATE_TEXT: Record<string, string> = { available: 'Disponible', full: 'Llena', unavailable: 'Fuera de servicio', stale: 'Sin datos recientes' };
 
 function stationPopup(s: Station, c?: Candidate) {
   const lines = [
     `<b>${esc(s.name)}</b>`,
-    `${esc(STATE_TEXT[s.state] ?? s.state)} · ${esc(s.docks)} free docks of ${esc(s.capacity)} · ${esc(s.bikes)} bikes`,
+    `${esc(STATE_TEXT[s.state] ?? s.state)} · ${esc(s.docks)} lugares libres de ${esc(s.capacity)} · ${esc(s.bikes)} bicis`,
   ];
-  if (c && c.p_free != null) lines.push(`Free dock when you arrive: <b>${pct(c.p_free)}</b> (ride ${Math.round(c.ride_min)} min)`);
-  else if (s.p_full) lines.push(`Full in 15 / 30 / 45 min: ${pct(s.p_full['15'])} / ${pct(s.p_full['30'])} / ${pct(s.p_full['45'])}`);
-  else lines.push('No prediction');
-  if (s.p_empty?.['15'] != null) lines.push(`No bike to take in 15 min: ${pct(s.p_empty['15'])}`);
+  if (c && c.p_free != null) lines.push(`Lugar libre al llegar: <b>${pct(c.p_free)}</b>`);
+  else if (s.p_full) lines.push(`Llena en 15 / 30 / 45 min: ${pct(s.p_full['15'])} / ${pct(s.p_full['30'])} / ${pct(s.p_full['45'])}`);
+  else lines.push('Sin pronóstico');
+  if (!c && s.p_empty?.['15'] != null) lines.push(`Sin bicis en 15 min: ${pct(s.p_empty['15'])}`);
   return lines.join('<br/>');
 }
 
@@ -88,6 +84,9 @@ export default function TripMap({
   pickup,
   candidates,
   radiusM,
+  legs,
+  selectedId,
+  onSelect,
   inset,
   onPickGoal,
 }: {
@@ -98,19 +97,26 @@ export default function TripMap({
   pickup: Pickup | null;
   candidates: Candidate[];
   radiusM: number;
-  /** Map area covered by the dock and the card: the camera centres on what stays visible. */
+  /** The trip's legs (lib/routes.ts): street routes, or straight lines until they arrive. */
+  legs: Leg[];
+  /** The chosen drop-off. A click on a candidate station selects it. */
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  /** The map area under the dock and the card. The camera centres on the visible area. */
   inset: Inset;
   onPickGoal: (p: Point) => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const pickGoal = useRef(onPickGoal);
+  const select = useRef(onSelect);
   const lookup = useRef<{ stations: Map<string, Station>; candidates: Map<string, Candidate> }>({ stations: new Map(), candidates: new Map() });
   const [broken, setBroken] = useState(false);
-  // Layers exist only after the style loads; a draw asked for earlier waits here.
+  // The layers exist only after the style loads. An earlier draw waits here.
   const ready = useRef(false);
   const pending = useRef<(() => void) | null>(null);
   pickGoal.current = onPickGoal;
+  select.current = onSelect;
   lookup.current = {
     stations: new Map(stations.map((s) => [s.id, s])),
     candidates: new Map(candidates.map((c) => [c.id, c])),
@@ -132,9 +138,12 @@ export default function TripMap({
     }
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
     // OpenFreeMap and OpenStreetMap require a visible credit. The dock covers the bottom.
-    m.addControl(new maplibregl.AttributionControl({ compact: true }), 'top-left');
+    m.addControl(
+      new maplibregl.AttributionControl({ compact: true, customAttribution: 'Rutas: OSRM, FOSSGIS' }),
+      'top-left',
+    );
     m.on('load', () => {
-      for (const id of ['stations', 'radius', 'path', 'candidates', 'pickup', 'goal', 'start']) m.addSource(id, { type: 'geojson', data: collection([]) });
+      for (const id of ['stations', 'radius', 'walk', 'bike', 'candidates', 'pickup', 'goal', 'start']) m.addSource(id, { type: 'geojson', data: collection([]) });
       m.addLayer({
         id: 'stations',
         type: 'circle',
@@ -142,21 +151,24 @@ export default function TripMap({
         paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 2, 15, 4], 'circle-color': faint },
       });
       m.addLayer({ id: 'radius', type: 'line', source: 'radius', paint: { 'line-color': ink, 'line-opacity': 0.45, 'line-width': 1, 'line-dasharray': [3, 2] } });
-      m.addLayer({ id: 'path', type: 'line', source: 'path', paint: { 'line-color': ink, 'line-opacity': 0.55, 'line-width': 2 }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
+      // Riding: solid line. Walking: dotted line. A straight leg (no route yet) is fainter.
+      const opacity: maplibregl.ExpressionSpecification = ['case', ['get', 'routed'], 0.8, 0.35];
+      m.addLayer({ id: 'bike', type: 'line', source: 'bike', paint: { 'line-color': ink, 'line-opacity': opacity, 'line-width': 3.5 }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
+      m.addLayer({ id: 'walk', type: 'line', source: 'walk', paint: { 'line-color': ink, 'line-opacity': opacity, 'line-width': 2.5, 'line-dasharray': [0.1, 2] }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
       m.addLayer({
         id: 'candidates',
         type: 'circle',
         source: 'candidates',
         paint: {
-          'circle-radius': ['case', ['<=', ['coalesce', ['get', 'rank'], 99], 2], 11, 7],
+          'circle-radius': ['case', ['get', 'selected'], 13, ['<=', ['coalesce', ['get', 'rank'], 99], 2], 11, 7],
           'circle-color': [
             'case',
             ['==', ['get', 'p_free'], -1],
             none,
             ['step', ['get', 'p_free'], ramp[0], FREE_STEPS[0], ramp[1], FREE_STEPS[1], ramp[2], FREE_STEPS[2], ramp[3]],
           ],
-          'circle-stroke-color': paper,
-          'circle-stroke-width': 2,
+          'circle-stroke-color': ['case', ['get', 'selected'], ink, paper],
+          'circle-stroke-width': ['case', ['get', 'selected'], 3, 2],
         },
       });
       m.addLayer({
@@ -180,7 +192,7 @@ export default function TripMap({
       m.on('mouseenter', layer, () => (m.getCanvas().style.cursor = 'pointer'));
       m.on('mouseleave', layer, () => (m.getCanvas().style.cursor = ''));
     }
-    // Double click = two click events, not dblclick: on phones a double tap does not always fire dblclick.
+    // Detect a double click from two click events: on phones, a double tap does not always fire dblclick.
     m.doubleClickZoom.disable();
     let last = { time: -Infinity, x: 0, y: 0 };
     m.on('click', (e) => {
@@ -189,7 +201,9 @@ export default function TripMap({
       if (hit) {
         const id = String(hit.properties.id);
         const s = lookup.current.stations.get(id);
-        if (s) popup.setLngLat([s.lng, s.lat]).setHTML(stationPopup(s, lookup.current.candidates.get(id))).addTo(m);
+        const c = lookup.current.candidates.get(id);
+        if (c?.recommendable) select.current(id);
+        if (s) popup.setLngLat([s.lng, s.lat]).setHTML(stationPopup(s, c)).addTo(m);
         return;
       }
       const time = e.originalEvent.timeStamp;
@@ -214,20 +228,26 @@ export default function TripMap({
       set('stations', stations.filter((s) => !near.has(s.id)).map((s) => point(s, { id: s.id })));
       set(
         'candidates',
-        // Best last, so it draws on top.
-        [...candidates].reverse().map((c) => point(c, { id: c.id, rank: c.rank, p_free: c.p_free ?? -1 })),
+        // Draw order: the selected station last, then the best, so they are on top.
+        [...candidates]
+          .reverse()
+          .sort((a, b) => Number(a.id === selectedId) - Number(b.id === selectedId))
+          .map((c) => point(c, { id: c.id, rank: c.rank, p_free: c.p_free ?? -1, selected: c.id === selectedId })),
       );
       set('start', start ? [point(start)] : []);
       set('goal', goal ? [point(goal)] : []);
       set('pickup', pickup && start && (pickup.lat !== start.lat || pickup.lng !== start.lng) ? [point(pickup)] : []);
       set('radius', goal ? [circle(goal, radiusM / 1000 / 1.3)] : []);
-      const best = candidates.find((c) => c.rank === 1);
-      const line = [start, pickup, best].filter(Boolean) as Point[];
-      set('path', line.length > 1 ? [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: line.map((p) => [p.lng, p.lat]) } }] : []);
+      const lines = (mode: string) =>
+        legs
+          .filter((l) => l.mode === mode)
+          .map((l): GeoJSON.Feature => ({ type: 'Feature', properties: { routed: l.routed }, geometry: { type: 'LineString', coordinates: l.coords } }));
+      set('walk', lines('walk'));
+      set('bike', lines('bike'));
     };
     if (ready.current) draw();
     else pending.current = draw;
-  }, [stations, start, goal, pickup, candidates, radiusM]);
+  }, [stations, start, goal, pickup, candidates, radiusM, legs, selectedId]);
 
   useEffect(() => {
     map.current?.setPadding(inset);
@@ -250,6 +270,6 @@ export default function TripMap({
     m.fitBounds(b, { padding, maxZoom: 15.5, duration: still ? 0 : 900, easing: easeOut() });
   }, [start?.lat, start?.lng, goal?.lat, goal?.lng]);
 
-  if (broken) return <p className="notice">Your browser cannot show the map. The plan below still works.</p>;
-  return <div ref={box} className="stage__mapbox" role="application" aria-label="Map. Double click to set the destination." />;
+  if (broken) return <p className="notice">Tu navegador no puede mostrar el mapa. El plan sigue funcionando.</p>;
+  return <div ref={box} className="stage__mapbox" role="application" aria-label="Mapa. Haz doble clic para elegir el destino." />;
 }

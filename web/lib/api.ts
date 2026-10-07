@@ -1,6 +1,5 @@
-// Client for ecobici.api (src/ecobici/api.py). NEXT_PUBLIC_API_URL sets the address at build time.
-// Adapted from a-donde-ir's useApi: each query waits WAIT_MS after the last change and cancels the previous one;
-// answers stay cached for CACHE_MS because captures arrive every 2 minutes.
+// Client for ecobici.api (src/ecobici/api.py), adapted from the a-donde-ir useApi. NEXT_PUBLIC_API_URL sets the
+// address at build time. CACHE_MS is 1 min because captures arrive every 2 min.
 
 import { useEffect, useState } from 'react';
 
@@ -21,7 +20,7 @@ export type Station = {
   docks: number | null;
   bikes: number | null;
   state: State;
-  /** P(full) at 15 / 30 / 45 min, keyed by minutes. Null when the station is not predicted. */
+  /** P(full) at 15, 30 and 45 min, keyed by minutes. Null if not predicted. */
   p_full: Record<string, number> | null;
   /** P(no bike) at 15 min, keyed by minutes. Null without the empty-station model. */
   p_empty: Record<string, number> | null;
@@ -37,14 +36,14 @@ export type StationsResponse = {
 export type Pickup = Station & {
   walk_m: number;
   walk_min: number;
-  /** P(no bike left when you get there); 0 at the start station itself. */
+  /** P(no bike left on arrival). 0 at the start station. */
   p_empty_at_arrival: number | null;
-  /** Walk + P(no bike) × failure cost + the best drop-off's expected minutes. */
+  /** Walk + P(no bike) × failure cost + expected minutes of the best drop-off. */
   total_min: number | null;
 };
 
 export type Candidate = Station & {
-  /** 1 = best. Null when not recommendable (out of service or stale). */
+  /** 1 = best. Null if not recommendable (out of service or stale). */
   rank: number | null;
   recommendable: boolean;
   walk_m: number;
@@ -65,9 +64,9 @@ export type PlanResponse = {
   radius_m: number;
   failure_min: number;
   pickup: Pickup;
-  /** The pickups compared, best total first. */
+  /** The compared pickups, lowest total first. */
   pickup_options: Pickup[];
-  /** The start station asked for, when it had no bike to take and the pickup moved to the nearest one that does. */
+  /** The start station asked for, if it had no bike to take. Then `pickup` is a station nearby. */
   requested: Station | null;
   candidates: Candidate[];
 };
@@ -75,9 +74,10 @@ export type PlanResponse = {
 const cache = new Map<string, { at: number; data: unknown }>();
 
 function problem(status: number, detail: unknown) {
-  if (status === 422 && typeof detail === 'string') return detail;
-  if (status === 503) return typeof detail === 'string' ? `No live data yet: ${detail}.` : 'No live data yet.';
-  return 'The prediction service is not reachable. Is the API running?';
+  if (status === 503) return 'Todavía no hay datos en vivo. Intenta en un minuto.';
+  if (status === 422 && detail === 'no station with a bike near the start') return 'No hay estaciones con bicis cerca del punto de partida.';
+  if (status === 422) return 'No se pudo calcular el viaje con esos datos.';
+  return 'El servicio de predicción no responde. ¿Está corriendo la API?';
 }
 
 function cached(url: string) {
@@ -99,8 +99,8 @@ async function load(url: string, signal: AbortSignal) {
   return body;
 }
 
-/** Query `path` with `params`. With `params` null, nothing is queried and the state clears. A change of `refresh`
- *  queries again (past the cache). While loading, `data` keeps the previous answer. */
+/** Query `path` with `params`. If `params` is null, clear the state. A new `refresh` value skips the cache. While
+ *  loading, `data` keeps the previous answer. */
 export function useApi<T>(path: string, params: URLSearchParams | null, refresh: unknown = null, wait = WAIT_MS) {
   const query = params ? String(params) : '';
   const url = params ? `${API_URL}${path}${query ? `?${query}` : ''}` : null;

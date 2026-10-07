@@ -1,15 +1,20 @@
-// Place search for the start and destination inputs. Ecobici stations match locally and instantly; addresses come
-// from Photon (OpenStreetMap, no key; same geocoder as a-donde-ir), limited to a box around the stations and cached
-// in localStorage. Typed text goes to photon.komoot.io.
+// Place search, adapted from a-donde-ir. Local and instant: the Ecobici stations and the index of public/lugares.json
+// (scripts/export_places.py). Online: Photon (OpenStreetMap, no key) in a box around the stations; the typed text goes
+// to photon.komoot.io. Photon answers stay in localStorage, and a longer query reuses the answer of its prefix at once.
 
 import type { Station } from '@/lib/api';
 
+const PLACES_URL = '/lugares.json';
 const GEOCODER = 'https://photon.komoot.io/api/';
 const CACHE_KEY = 'ecobici-geocode-v1';
 const CACHE_MAX = 60;
 const MARGIN_DEG = 0.02;
+// Ecobici stations come before every kind in the index.
+const STATION_RANK = -1;
 
 export type Suggestion = { lat: number; lng: number; name: string; context: string; stationId?: string };
+type Place = Suggestion & { rank: number; plain: string; words: string[] };
+export type PlacesFile = { version: number; kinds: string[]; places: [string, number, number, number][] };
 
 /** Lowercase, no accents or punctuation: "Álvaro Obregón" → "alvaro obregon". */
 export function plain(text: string) {
@@ -22,19 +27,68 @@ export function plain(text: string) {
     .trim();
 }
 
-/** Stations whose code or name has every typed word as a word start ("ref flor" → "Reforma- Florencia"). */
-export function searchStations(stations: Station[], query: string, limit: number): Suggestion[] {
-  const tokens = plain(query).split(' ').filter(Boolean);
-  if (!tokens.length) return [];
+// So that "roma" also starts "Colonia Roma Norte".
+const LEADING = /^(colonia|col|barrio|estacion) /;
+
+function makePlace(s: Suggestion, rank: number): Place {
+  const p = plain(s.name);
+  return { ...s, rank, plain: p.replace(LEADING, ''), words: p.split(' ') };
+}
+
+let placesFile: Promise<PlacesFile | null> | null = null;
+
+/** The index file, fetched once. Null if it is missing: the search then uses stations and Photon only. */
+export function loadPlaces() {
+  placesFile ??= fetch(PLACES_URL)
+    .then((r) => (r.ok ? (r.json() as Promise<PlacesFile>) : null))
+    .catch(() => null);
+  return placesFile;
+}
+
+export function buildIndex(file: PlacesFile | null, stations: Station[]): Place[] {
+  const out: Place[] = stations.map((s) =>
+    makePlace(
+      { lat: s.lat, lng: s.lng, name: s.name.replace(/^CE-\d+\s*/, ''), context: `Estación Ecobici ${s.code}`, stationId: s.id },
+      STATION_RANK,
+    ),
+  );
+  for (const [name, kind, lat, lng] of file?.places ?? []) out.push(makePlace({ lat, lng, name, context: file!.kinds[kind] }, kind));
+  return out;
+}
+
+const km = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) =>
+  Math.hypot(a.lat - b.lat, (a.lng - b.lng) * Math.cos((a.lat * Math.PI) / 180)) * 111.32;
+
+/** Places where each typed word starts a word of the name. Order: same start, kind, distance to `near`, shorter
+ *  name. */
+export function searchPlaces(index: Place[], query: string, near: { lat: number; lng: number }, limit: number): Suggestion[] {
+  const q = plain(query);
+  if (!q) return [];
+  const tokens = q.split(' ');
+  const hits: { place: Place; score: number; km: number }[] = [];
+  for (const place of index) {
+    if (!tokens.every((t) => place.words.some((w) => w.startsWith(t)))) continue;
+    hits.push({ place, score: place.plain.startsWith(q) ? 0 : 1, km: km(near, place) });
+  }
+  hits.sort((a, b) => a.score - b.score || a.place.rank - b.place.rank || a.km - b.km || a.place.name.length - b.place.name.length);
+  const seen = new Set<string>();
   const out: Suggestion[] = [];
-  for (const s of stations) {
-    const words = plain(`${s.code} ${s.name.replace(/^CE-\d+\s*/, '')}`).split(' ');
-    if (tokens.every((t) => words.some((w) => w.startsWith(t)))) {
-      out.push({ lat: s.lat, lng: s.lng, name: s.name, context: `Ecobici station ${s.code}`, stationId: s.id });
-      if (out.length >= limit) break;
-    }
+  for (const { place } of hits) {
+    const key = `${place.plain}|${place.context}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const { rank, plain: _, words, ...s } = place;
+    out.push(s);
+    if (out.length >= limit) break;
   }
   return out;
+}
+
+/** Local results first, unless the text has a number (a street address): then Photon first. No repeated names. */
+export function merge(query: string, local: Suggestion[], online: Suggestion[], limit: number) {
+  const ordered = /\d/.test(query) ? [...online, ...local] : [...local, ...online];
+  const seen = new Set<string>();
+  return ordered.filter((s) => !seen.has(plain(s.name)) && seen.add(plain(s.name))).slice(0, limit);
 }
 
 /** Photon's bbox (minLon,minLat,maxLon,maxLat) around the stations. */
@@ -65,7 +119,7 @@ function loadCache() {
   try {
     for (const [k, v] of JSON.parse(localStorage.getItem(CACHE_KEY) ?? '[]') as [string, Suggestion[]][]) remote.set(k, v);
   } catch {
-    // No localStorage (private mode or blocked): the cache stays in memory.
+    // No localStorage (private mode): keep the cache in memory.
   }
 }
 
@@ -75,6 +129,16 @@ function saveCache() {
   } catch {
     // Same as above.
   }
+}
+
+/** Saved Photon answers for the longest saved query that starts `query`, filtered by `query`. No network. */
+export function cachedOnline(query: string, near: { lat: number; lng: number }, limit: number): Suggestion[] {
+  loadCache();
+  const q = plain(query);
+  let best = '';
+  for (const k of remote.keys()) if (q.startsWith(k) && k.length > best.length) best = k;
+  if (!best) return [];
+  return searchPlaces(remote.get(best)!.map((s) => makePlace(s, 0)), query, near, limit);
 }
 
 /** Addresses and places for `query` near `near`, inside `box`. */

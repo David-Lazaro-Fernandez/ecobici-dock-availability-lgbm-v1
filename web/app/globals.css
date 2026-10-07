@@ -1,7 +1,5 @@
-/* Layout on the skeleton of a-donde-ir (stage, dock, card, search bar, suggestions, options menu), in this project's
-   own neutral look: ink on paper, one accent (the start), and a one-hue sequential ramp for P(free dock). The ramp and
-   accent come from the validated chart palette (each step >= 2:1 on the light map). The basemap is light, so the page
-   is light-only. */
+/* Layout from the a-donde-ir skeleton, with this project's colours. The ramp and the accent come from the validated
+   chart palette (contrast 2:1 or more on the light map). The basemap is light, so the page is light only. */
 
 :root {
   color-scheme: light;
@@ -551,13 +549,6 @@ input:focus-visible {
   color: var(--accent-ink);
 }
 
-.card__alts {
-  display: block;
-  margin-top: 6px;
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-
 .code {
   font-size: 0.75em;
   font-weight: 500;
@@ -565,33 +556,104 @@ input:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-.card__pick {
-  display: grid;
-  grid-template-columns: 28px 1fr auto;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
+/* Sort: icon buttons under the card title. */
+.sort {
+  display: flex;
+  gap: 6px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--line);
 }
 
-.card__pick.is-best {
-  background: var(--soft);
+.sort__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  color: var(--muted);
 }
 
-.card__rank {
+.sort__btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.sort__btn:hover {
+  color: var(--ink);
+  border-color: var(--ink-30);
+}
+
+.sort__btn.is-on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+
+/* One row per station; rank 1 and 2 keep their badge and wash wherever the sort puts them. */
+.row {
+  display: grid;
+  grid-template-columns: 26px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: calc(100% + 32px);
+  margin: 0 -16px;
+  padding: 10px 16px;
+  text-align: left;
+}
+
+button.row:hover {
+  background: var(--bg);
+}
+
+/* The selected drop-off: the route on the map goes there. */
+.row.is-selected,
+button.row.is-selected:hover {
+  background: var(--soft);
+  box-shadow: inset 3px 0 0 var(--ink);
+}
+
+.row__route {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.8rem;
+  color: var(--ink);
+}
+
+
+.row__rank {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
-  background: var(--free-2);
-  color: var(--paper);
+  border: 1px solid var(--line);
+  font-size: 0.78rem;
   font-weight: 700;
-  font-size: 0.8rem;
+  color: var(--muted);
 }
 
-.card__pick-body {
+.row.is-best .row__rank {
+  background: var(--free-2);
+  border-color: var(--free-2);
+  color: var(--paper);
+}
+
+.row__body {
   min-width: 0;
+}
+
+.row__tag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--free-2);
+  color: var(--paper);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  vertical-align: 1px;
 }
 
 .card__chance {
@@ -610,12 +672,7 @@ input:focus-visible {
   overflow-y: auto;
 }
 
-.card__list li {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 0;
+.card__list > li {
   border-bottom: 1px solid var(--line);
   font-size: 0.9rem;
 }
@@ -650,13 +707,21 @@ input:focus-visible {
 }
 
 .card__legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 10px;
   padding: 10px 16px;
   border-top: 1px solid var(--line);
   font-size: 0.75rem;
   color: var(--muted);
+}
+
+.card__legend-title {
+  margin-bottom: 4px;
+}
+
+.card__legend-items {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  white-space: nowrap;
 }
 
 .card__legend span {
@@ -729,6 +794,10 @@ input:focus-visible {
   }
 
   .ask__locate span {
+    display: none;
+  }
+
+  .sort__btn span {
     display: none;
   }
 
