@@ -2,7 +2,7 @@
 
 Este documento explica cómo se construyó el modelo de M6, por qué se eligió cada parte de la metodología, cómo se probó y sobre qué datos. Los números vienen de los reportes de cada etapa, en [`docs/reports/`](reports/). Todo es reproducible con los comandos indicados.
 
-Estado al 2026-10-06: el modelo supera las líneas base en todos los cortes y, con una calibración propia para saturadas + pico, cumple la meta de calibración en los tres horizontes, justo en el límite del IC (ver [§4.2](#42-por-qué-calibración-isotónica-y-luego-platt-por-subgrupo)). Los meses de prueba todavía no se han usado.
+Estado al 2026-10-07: **el modelo congelado cumple los criterios en la prueba final** (2026-01 y 2026-09, [M6_test](reports/M6_test.md)). Reduce el error 17–25 % frente a la mejor alternativa simple en todos los cortes. La calibración en saturadas + pico cumple en el valor puntual, sin holgura, y la calibración por subgrupo no aportó fuera de VAL_REPORT (ver [§7](#7-limitaciones-y-pendientes)).
 
 ---
 
@@ -111,7 +111,7 @@ El PRD exige superar a dos (persistencia y promedio por estación y franja). Si 
 - **TRAIN** (2024-09 → 2025-06): ajuste del modelo y de todos los perfiles históricos.
 - **VAL_FIT** (2025-08, 2025-09): parada temprana, calibración isotónica y el Platt fijo del subgrupo. Es la única información "del futuro" que ve el modelo, aparte de la recalibración semanal, que solo usa semanas ya pasadas.
 - **VAL_REPORT** (2025-10 → 2025-12): todas las métricas reportadas. `p_lgbm` no se ajustó mirando estos meses; por eso VAL_FIT y VAL_REPORT están separados. La calibración por subgrupo (`p_lgbm_sub_roll`) sí se eligió después de verlos, y por eso la confirma TEST.
-- **TEST** (2026-01, y 2026-09 desde el 11): **el código ni siquiera lee estos archivos.** Se usan una sola vez, al final, junto con la captura propia (M7). 2026-01 es la prueba principal. 2026-09 se reporta aparte, porque tiene cadencia de 12 min y sus etiquetas a 15 / 30 / 45 min se leen a 12 / 24 / 48 min ([M2](reports/M2_history.md#2026-09-en-detalle-2026-10-06)).
+- **TEST** (2026-01, y 2026-09 desde el 11): **usados una sola vez, el 2026-10-07** ([M6_test](reports/M6_test.md)). Hasta entonces el código no leía estos archivos. 2026-01 es la prueba principal. 2026-09 se reporta aparte, porque tiene cadencia de 12 min y sus etiquetas a 15 / 30 / 45 min se leen a 12 / 24 / 48 min ([M2](reports/M2_history.md#2026-09-en-detalle-2026-10-06)).
 - Los meses en que el scraper de MaxHalford se degradó (2025-07 y 2026-02 → 2026-08) quedan fuera de todo ([M2](reports/M2_history.md)).
 
 ### 5.2 Métricas y metas
@@ -203,9 +203,10 @@ Detalle completo en [M6](reports/M6_lgbm.md). Brier del caso del producto (`satu
 
 ## 7. Limitaciones y pendientes
 
-1. **Calibración en el subgrupo saturadas + pico: resuelta en VAL_REPORT, falta confirmarla.**
-   - La recalibración semanal global no ayudaba. Hecha solo en el subgrupo, sí ([§4.2](#42-por-qué-calibración-isotónica-y-luego-platt-por-subgrupo)).
-   - Se eligió después de ver VAL_REPORT y cumple justo en el límite del IC. La prueba final decide.
+1. **Calibración en el subgrupo saturadas + pico: cumple en la prueba final, sin holgura.**
+   - En 2026-01 el modelo congelado subestima 3–7 puntos en el rango medio a 30 y 45 min, y `p_lgbm` sobreestima ~5 puntos en un bin. La calibración del subgrupo cambia de un mes a otro, y la ventana de 28 días la persigue con retraso ([M6_test](reports/M6_test.md)).
+   - Si `p_lgbm_sub_roll` se queda o se vuelve a `p_lgbm` se decide en la captura propia.
+   - En VAL_REPORT, la recalibración semanal global no ayudaba y la del subgrupo sí ([§4.2](#42-por-qué-calibración-isotónica-y-luego-platt-por-subgrupo)). En la prueba final, la del subgrupo queda 0.001–0.003 de BSS por debajo de `p_lgbm`: se eligió después de ver VAL_REPORT, y fuera de él no se sostuvo.
    - Necesita 28 días de etiquetas previas. En 2026-09 (sin historia antes del 11) y al inicio de la captura propia, usa el Platt fijo durante ~1.5 semanas.
    - En los bins de 0.8–0.9 (< 1,000 filas) a 30 y 45 min ahora subestima. La meta no los cuenta, pero hay que vigilarlos.
 2. **Deriva entre periodos.** Octubre a diciembre de 2025 fue menos saturado que el periodo de entrenamiento. En producción, el reentrenamiento periódico con datos recientes (PRD) es la mitigación.

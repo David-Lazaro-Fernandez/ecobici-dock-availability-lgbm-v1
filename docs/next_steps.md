@@ -1,6 +1,6 @@
 # Siguientes pasos: del modelo M6 a la prueba final
 
-Estado al 2026-10-06, actualizado tras cerrar los pasos 1 a 4. Resume la revisión de [`modeling.md`](modeling.md) y lo que se decidió después de revisar la captura propia. Los plazos y las etapas generales siguen en [`ENG_PLAN.md`](ENG_PLAN.md).
+Estado al 2026-10-07, actualizado tras la prueba final (paso 8). Resume la revisión de [`modeling.md`](modeling.md) y lo que se decidió después de revisar la captura propia. Los plazos y las etapas generales siguen en [`ENG_PLAN.md`](ENG_PLAN.md).
 
 ## Dónde estamos
 
@@ -13,7 +13,11 @@ Estado al 2026-10-06, actualizado tras cerrar los pasos 1 a 4. Resume la revisi�
   - **`p_lgbm_sub_roll` (congelado):** 0.028 [0.018, 0.050] / 0.029 [0.021, 0.049] / 0.032 [0.025, 0.051], y el BSS sube 0.003–0.008.
   - Se eligió después de ver VAL_REPORT, así que la prueba final decide. Detalle en [M6](reports/M6_lgbm.md#calibración-por-subgrupo-2026-10-06).
 - **Captura propia:** corre desde el 2026-10-06. El primer día solo tiene ~3 h continuas (11:37–14:38 hora local), sin pico de la mañana. Todavía no sirve para medir el modelo.
-- **Meses de prueba de MaxHalford:** 2026-01 completo y 2026-09 desde el 11 (paso 4). Sin leer sus etiquetas. Con ellos ya se puede obtener el resultado final de 15, 30 y 45 min, sin esperar a la captura.
+- **Prueba final (paso 8, 2026-10-07): cumple en 2026-01 y 2026-09.** Detalle en [M6_test](reports/M6_test.md).
+  - **Precisión confirmada:** BSS en saturadas + pico de +0.238 / +0.229 / +0.217 (2026-01) y +0.247 / +0.253 / +0.247 (2026-09). El límite inferior más bajo en cualquier corte es +0.155.
+  - **Calibración: cumple en el valor puntual, sin holgura.** Con un mes, pocos bins llegan a 1,000 filas. Mirando todos, en 2026-01 el modelo congelado subestima 3–7 puntos en el rango medio a 30 y 45 min: el Platt semanal se ajustó con diciembre y corrigió de más.
+  - **La calibración por subgrupo no aportó en la prueba** (BSS 0.001–0.003 por debajo de `p_lgbm`). Se decide en la captura propia (paso 9).
+  - Los meses de prueba ya están usados: no sirven para elegir ni ajustar nada más.
 
 ## Qué significa un horizonte
 
@@ -62,12 +66,9 @@ El horizonte es cuánto tiempo hacia adelante predice el modelo: del momento en 
 
 ### Después, una sola vez
 
-8. **Prueba final de 15, 30 y 45 min:** evaluar `p_lgbm_sub_roll` congelado (y `p_lgbm` como referencia fijada de antemano) en 2026-01 y 2026-09. Se puede hacer apenas termine el paso 4.
-   - La recalibración semanal necesita los 28 días anteriores con etiqueta. Para 2026-01 salen de 2025-12.
-   - Para 2026-09 no hay historia previa (del 2026-08 al 2026-09-10 está excluido). La ventana arranca el 11 y usa el Platt fijo hasta juntar 5,000 filas del subgrupo (~1.5 semanas), así que casi todo el mes va con el Platt fijo. Reportar cuántas semanas usó cada uno.
-   - Leer 2026-09 solo desde `splits.TEST_FROM`, y reportarlo aparte de 2026-01 (ver paso 4).
-   - Mirar los bins de 0.8–0.9 a 30 y 45 min: en VAL_REPORT el calibrador semanal los subestima, aunque tienen < 1,000 filas.
+8. ✅ **Prueba final de 15, 30 y 45 min** (2026-10-07). Protocolo registrado y commit antes de correr (`4b2c0eb`), corrida única con `ecobici.eval.test_report`. **Cumple los tres criterios en los dos meses.** Ver [M6_test](reports/M6_test.md).
 9. **Prueba en datos reales:** el mismo modelo congelado sobre la captura propia, con al menos ~10 mañanas entre semana (~2 semanas).
+   - **Reportar `p_lgbm` al lado de `p_lgbm_sub_roll`.** En la prueba final la calibración por subgrupo no ayudó, y aquí se decide si se queda.
    - Usar el mismo bootstrap por días del paso 2.
    - La recalibración semanal del subgrupo usa el Platt fijo hasta que la captura junte ~1.5 semanas de picos.
    - Con 66 días hábiles en VAL_REPORT, el IC del BSS ya mide ±0.02. Con ~10 mañanas será unas 2.5 veces más ancho (≈ ±0.05), suficiente para confirmar BSS > 0.10 pero no para medir la calibración. Para eso hacen falta más semanas.
