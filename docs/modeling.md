@@ -2,7 +2,7 @@
 
 Este documento explica cómo se construyó el modelo de M6, por qué se eligió cada parte de la metodología, cómo se probó y sobre qué datos. Los números vienen de los reportes de cada etapa, en [`docs/reports/`](reports/). Todo es reproducible con los comandos indicados.
 
-Estado al 2026-10-06: el modelo supera las líneas base en todos los cortes. La calibración dentro del subgrupo más saturado está pendiente (ver [§7](#7-limitaciones-y-pendientes)). Los meses de prueba todavía no se han usado.
+Estado al 2026-10-06: el modelo supera las líneas base en todos los cortes y, con una calibración propia para saturadas + pico, cumple la meta de calibración en los tres horizontes, justo en el límite del IC (ver [§4.2](#42-por-qué-calibración-isotónica-y-luego-platt-por-subgrupo)). Los meses de prueba todavía no se han usado.
 
 ---
 
@@ -61,7 +61,8 @@ Los perfiles históricos (flujos y perfil de estación) se ajustan **solo con lo
 - **Algoritmo:** **LightGBM** (gradient boosting de árboles), objetivo `binary`, un modelo por horizonte.
 - **Hiperparámetros:** `learning_rate` 0.05, `num_leaves` 127, `min_data_in_leaf` 200, `feature_fraction` y `bagging_fraction` 0.8, L2 = 1. `station` es categórica.
 - **Parada temprana:** 100 rondas sin mejora en el periodo VAL_FIT. Los modelos se quedan en 137–153 árboles, y cada uno entrena en ~1.3 min con 14 núcleos.
-- **Calibración:** **regresión isotónica** ajustada sobre las predicciones de VAL_FIT. Es el modelo principal, `p_lgbm`, fijado antes de ver los resultados.
+- **Calibración:** **regresión isotónica** ajustada sobre las predicciones de VAL_FIT. Es `p_lgbm`, el modelo fijado antes de ver los resultados.
+- **Calibración por subgrupo:** en saturadas + pico, un Platt sobre `p_lgbm` reajustado cada semana con los 28 días anteriores del subgrupo. Si hay pocos datos, usa un Platt fijo ajustado en VAL_FIT. Es `p_lgbm_sub_roll`, **el modelo congelado para la prueba final**, elegido después de ver VAL_REPORT.
 - **Reproducibilidad:** filas ordenadas (`ORDER BY sid, t`) y `deterministic=True`. Dos corridas dan exactamente los mismos números (verificado con los datos reales).
 
 ## 4. Por qué esta metodología
@@ -77,9 +78,15 @@ Los perfiles históricos (flujos y perfil de estación) se ajustan **solo con lo
 
 XGBoost o CatBoost darían resultados parecidos. CatBoost sería la comparación natural si la variable categórica `station` resultara problemática.
 
-### 4.2 Por qué calibración isotónica
+### 4.2 Por qué calibración isotónica, y luego Platt por subgrupo
 
 El objetivo es una probabilidad que se pueda creer. Aunque el boosting minimiza log loss, puede quedar descalibrado cuando hay deriva entre periodos, y en M5 la vimos: el promedio histórico predecía 35 % donde se observaba 24 %. La isotónica no supone una forma funcional (a diferencia de Platt) y con millones de ejemplos no sobreajusta.
+
+Pero la isotónica global se ajusta sobre todas las filas, y el 97 % son casos fáciles de "no se llena". En saturadas + pico, el modelo sobreestimaba 2 puntos ya en VAL_FIT y de 4 a 6 en VAL_REPORT, porque esas estaciones se llenaron menos en otoño. Para eso hay una segunda calibración, solo en el subgrupo:
+- **Platt** (2 parámetros, monótono) en vez de isotónica, porque el subgrupo tiene ~20 k filas al mes y una isotónica con muchos escalones sobreajusta.
+- **Reajustada cada semana** con los 28 días anteriores, porque una parte del sesgo es de temporada. Un Platt fijo en VAL_FIT corrige la parte del subgrupo, pero su IC no baja de 0.05 (0.059 / 0.058 / 0.072).
+
+Resultado en VAL_REPORT: brecha de 0.028 / 0.029 / 0.032 a 15 / 30 / 45 min, con extremo superior del IC por días de 0.050 / 0.049 / 0.051, y el BSS sube 0.003–0.008 ([M6](reports/M6_lgbm.md#calibración-por-subgrupo-2026-10-06)). Como se eligió después de ver VAL_REPORT, la prueba final decide.
 
 ### 4.3 Por qué una separación temporal y no aleatoria
 
@@ -102,9 +109,9 @@ El PRD exige superar a dos (persistencia y promedio por estación y franja). Si 
 ```
 
 - **TRAIN** (2024-09 → 2025-06): ajuste del modelo y de todos los perfiles históricos.
-- **VAL_FIT** (2025-08, 2025-09): parada temprana y calibración isotónica. Es la única información "del futuro" que ve el modelo.
-- **VAL_REPORT** (2025-10 → 2025-12): todas las métricas reportadas. Ninguna decisión del modelo se tomó mirando estos meses; por eso VAL_FIT y VAL_REPORT están separados.
-- **TEST** (2026-01 y 2026-09): **el código ni siquiera lee estos archivos.** Se usan una sola vez, al final, junto con la captura propia (M7).
+- **VAL_FIT** (2025-08, 2025-09): parada temprana, calibración isotónica y el Platt fijo del subgrupo. Es la única información "del futuro" que ve el modelo, aparte de la recalibración semanal, que solo usa semanas ya pasadas.
+- **VAL_REPORT** (2025-10 → 2025-12): todas las métricas reportadas. `p_lgbm` no se ajustó mirando estos meses; por eso VAL_FIT y VAL_REPORT están separados. La calibración por subgrupo (`p_lgbm_sub_roll`) sí se eligió después de verlos, y por eso la confirma TEST.
+- **TEST** (2026-01, y 2026-09 desde el 11): **el código ni siquiera lee estos archivos.** Se usan una sola vez, al final, junto con la captura propia (M7). 2026-01 es la prueba principal. 2026-09 se reporta aparte, porque tiene cadencia de 12 min y sus etiquetas a 15 / 30 / 45 min se leen a 12 / 24 / 48 min ([M2](reports/M2_history.md#2026-09-en-detalle-2026-10-06)).
 - Los meses en que el scraper de MaxHalford se degradó (2025-07 y 2026-02 → 2026-08) quedan fuera de todo ([M2](reports/M2_history.md)).
 
 ### 5.2 Métricas y metas
@@ -146,7 +153,8 @@ Además de la evaluación estadística, cada pieza tiene pruebas con datos sint�
 | Etiquetas incorrectas | `test_labels.py`: "fuera de servicio" tiene prioridad sobre "llena" y sobre `stale` |
 | Datos de entrada sucios | `test_trips.py`: 6 formatos de nombre, 2 esquemas de columnas, años de 2 dígitos, horas dañadas, estaciones dobles |
 | Modelo no reproducible | `test_lgbm.py`: dos entrenamientos dan predicciones idénticas; el orden de filas es estable |
-| Recalibración que mire el futuro | `test_lgbm.py`: la recalibración semanal solo usa semanas anteriores |
+| Recalibración que mire el futuro | `test_lgbm.py`: la recalibración semanal solo usa semanas anteriores, y con una ventana corta usa el calibrador fijo |
+| Calibrador por subgrupo mal ajustado | `test_lgbm.py`: Platt recupera parámetros conocidos, es monótono y se guarda y carga igual |
 | Métricas mal calculadas | `test_baselines.py::test_metrics`: Brier, BSS y calibración contra valores calculados a mano |
 | Intervalos demasiado estrechos | `test_bootstrap.py`: los bloques usan el día local; con un choque que mueve a todas las estaciones el mismo día, los bloques por día dan intervalos más anchos que estación × día |
 | Líneas base reajustadas con otros meses | `test_baselines.py::test_baselines_refit_on_other_months`: cada versión usa solo sus meses |
@@ -171,33 +179,35 @@ Revisé variable por variable lo que se conoce en *t*:
 
 Detalle completo en [M6](reports/M6_lgbm.md). Brier del caso del producto (`saturated_peak`):
 
-| Horizonte | Mejor línea base (persistencia calibrada) | LightGBM | BSS |
-| --- | --- | --- | --- |
-| 15 min | 0.0902 | 0.0707 | **+0.216** |
-| 30 min | 0.1096 | 0.0857 | **+0.218** |
-| 45 min | 0.1176 | 0.0934 | **+0.205** |
+| Horizonte | Mejor línea base (persistencia calibrada) | `p_lgbm` | BSS | `p_lgbm_sub_roll` | BSS |
+| --- | --- | --- | --- | --- | --- |
+| 15 min | 0.0902 | 0.0707 | +0.216 | 0.0704 | **+0.219** |
+| 30 min | 0.1096 | 0.0857 | +0.218 | 0.0853 | **+0.222** |
+| 45 min | 0.1176 | 0.0934 | +0.205 | 0.0925 | **+0.213** |
 
 | Meta | 15 min | 30 min | 45 min |
 | --- | --- | --- | --- |
 | BSS > 0 en los 4 cortes | ✅ (+0.18 … +0.22) | ✅ (+0.18 … +0.22) | ✅ (+0.17 … +0.21) |
-| BSS ≥ 0.10 en saturadas + pico | n/a | ✅ +0.218 | n/a |
-| Calibración ≤ 0.05 en saturadas + pico | ❌ 0.059 | ✅ 0.047 | ❌ 0.073 |
-| V8: brecha centro/periferia | ✅ ECE 0.0006 / 0.0004 | ✅ 0.0012 / 0.0006 | ✅ 0.0016 / 0.0007 |
+| BSS ≥ 0.10 en saturadas + pico | n/a | ✅ +0.222 | n/a |
+| Calibración ≤ 0.05 en saturadas + pico, `p_lgbm` | ❌ 0.059 | ✅ 0.047 | ❌ 0.073 |
+| Calibración ≤ 0.05 en saturadas + pico, `p_lgbm_sub_roll` | ✅ 0.028 [0.018, 0.050] | ✅ 0.029 [0.021, 0.049] | ✅ 0.032 [0.025, 0.051] |
+| V8: brecha centro/periferia (`p_lgbm_sub_roll`) | ✅ ECE 0.0006 / 0.0003 | ✅ 0.0012 / 0.0004 | ✅ 0.0017 / 0.0005 |
 
 **Lectura:**
 - El modelo reduce el error ~20 % frente a la mejor alternativa simple en todos los cortes, más del doble de la meta.
 - **No viene de usar datos más recientes:** con las líneas base reajustadas en TRAIN + VAL_FIT, o recalibradas en VAL_FIT como el modelo, el BSS baja como mucho 0.002.
 - **No es ruido:** con bootstrap por bloques de días, el IC 95 % del BSS en saturadas + pico es [+0.20, +0.23] a 15 min, [+0.20, +0.24] a 30 min y [+0.18, +0.23] a 45 min.
-- **La calibración en saturadas + pico no cumple la meta de forma robusta en ningún horizonte.** El ✅ de 30 min (0.047, IC [0.039, 0.076]) no se distingue del ❌ de 15 min (0.059, IC [0.044, 0.085]). El sesgo hacia arriba sí es sistemático.
+- **Con `p_lgbm`, la calibración en saturadas + pico no cumplía la meta de forma robusta en ningún horizonte.** El ✅ de 30 min (0.047, IC [0.039, 0.076]) no se distinguía del ❌ de 15 min (0.059, IC [0.044, 0.085]).
+- **Con la calibración por subgrupo (`p_lgbm_sub_roll`) cumple en los tres**, con el extremo superior del IC por días en 0.049–0.051. Se eligió después de ver estos datos: la prueba final decide.
 - La mejora viene de corregir lo que las líneas base no ven: cuando una estación saturada **todavía no** está llena a las 9 h, la persistencia calibrada predice 2.6 % de que se llene en 30 min, y en la realidad pasa el 10.8 % ([M5](reports/M5_baselines.md)).
 
 ## 7. Limitaciones y pendientes
 
-1. **Calibración en el subgrupo saturadas + pico.**
-   - En todas las estaciones la calibración es casi perfecta. Dentro de saturadas + pico, el modelo sobreestima de 3 a 7 puntos en los rangos intermedios.
-   - Se probó una recalibración semanal (simulando el reentrenamiento diario del PRD). **No ayudó**: 15 min mejoró, 30 y 45 empeoraron, así que no es deriva en el tiempo.
-   - Diagnóstico: el calibrador se ajusta sobre todos los ejemplos, y el 97 % son casos fáciles.
-   - Siguiente paso propuesto: **calibración por subgrupo**, a confirmar en TEST.
+1. **Calibración en el subgrupo saturadas + pico: resuelta en VAL_REPORT, falta confirmarla.**
+   - La recalibración semanal global no ayudaba. Hecha solo en el subgrupo, sí ([§4.2](#42-por-qué-calibración-isotónica-y-luego-platt-por-subgrupo)).
+   - Se eligió después de ver VAL_REPORT y cumple justo en el límite del IC. La prueba final decide.
+   - Necesita 28 días de etiquetas previas. En 2026-09 (sin historia antes del 11) y al inicio de la captura propia, usa el Platt fijo durante ~1.5 semanas.
+   - En los bins de 0.8–0.9 (< 1,000 filas) a 30 y 45 min ahora subestima. La meta no los cuenta, pero hay que vigilarlos.
 2. **Deriva entre periodos.** Octubre a diciembre de 2025 fue menos saturado que el periodo de entrenamiento. En producción, el reentrenamiento periódico con datos recientes (PRD) es la mitigación.
 3. **Los viajes solo registran demanda satisfecha.** El flujo histórico subestima las llegadas a estaciones que estaban llenas. Afecta las variables, no la etiqueta, que sale del estado de la estación.
 4. **Cadencia de 15 min en MaxHalford.** Episodios de "llena" más cortos pueden perderse, y por eso 10/20 min esperan a la captura propia a 2 min (M7).
@@ -212,8 +222,8 @@ uv run python -m ecobici.ingest.maxhalford download    # 84 MB
 uv run python -m ecobici.ingest.trips download         # ~5 GB de CSV → 956 MB de parquet
 uv run python -m ecobici.ingest.openmeteo
 uv run python -m ecobici.eval.baseline_report           # M5, ~15 s
-uv run python -m ecobici.eval.model_report              # M6, ~5.5 min, ~18 GB de RAM como máximo
+uv run python -m ecobici.eval.model_report              # M6, ~7 min, ~18 GB de RAM como máximo
 uv run pytest
 ```
 
-Los modelos se guardan en `artifacts/lgbm_{h}.txt` y su calibración en `artifacts/isotonic_{h}.json`; ambos están en `.gitignore`.
+Los modelos se guardan en `artifacts/lgbm_{h}.txt`, su calibración en `artifacts/isotonic_{h}.json` y el Platt fijo del subgrupo en `artifacts/platt_sub_{h}.json`; todos están en `.gitignore`.

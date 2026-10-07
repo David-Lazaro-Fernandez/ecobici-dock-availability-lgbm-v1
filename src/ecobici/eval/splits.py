@@ -9,6 +9,10 @@ TRAIN = tuple(f"{y}-{m:02d}" for y, m in [(2024, 9), (2024, 10), (2024, 11), (20
 )
 VALIDATION = tuple(f"2025-{m:02d}" for m in range(8, 13))
 TEST = ("2026-01", "2026-09")
+# 2026-09 counts only from the scraper's recovery (M2, "2026-09 en detalle"): before
+# 09-11 local it still has the 2026-02..08 degradation. Its 12-min cadence shifts the
+# 15/30/45 targets by −3/−6/+3 min, so it is reported apart from 2026-01.
+TEST_FROM = {"2026-09": "2026-09-11"}  # local date, inclusive
 
 SPLITS = {"train": TRAIN, "validation": VALIDATION, "test": TEST}
 
