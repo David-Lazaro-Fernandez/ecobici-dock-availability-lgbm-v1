@@ -31,8 +31,11 @@ def load_snapshots(con: duckdb.DuckDBPyConnection, files: list[Path]) -> None:
                num_docks_disabled AS docks_disabled,
                capacity,
                latitude AS lat,
-               longitude AS lon
-        FROM read_parquet(?)
+               longitude AS lon,
+               -- The file a row came from (UTC month), so a table can be fitted on
+               -- the same files whatever else is loaded.
+               regexp_extract(filename, '(\d{4}-\d{2})\.parquet$', 1) AS file_month
+        FROM read_parquet(?, filename = true)
         """,
         [[str(f) for f in files]],
     )

@@ -64,9 +64,18 @@ CATEGORICAL = ["station"]
 
 
 def prepare_shared(
-    con: duckdb.DuckDBPyConnection, flow: pl.DataFrame, weather: pl.DataFrame
+    con: duckdb.DuckDBPyConnection,
+    flow: pl.DataFrame,
+    weather: pl.DataFrame,
+    station_files: tuple[str, ...] | None = None,
 ) -> None:
-    """Per-snapshot neighbour state, weather, flows, station profiles and holidays."""
+    """Per-snapshot neighbour state, weather, flows, station profiles and holidays.
+
+    The station list (its ``station`` codes, coordinates and neighbours) comes from
+    every loaded snapshot, or only from the files of ``station_files`` (file months),
+    so loading more months cannot change the codes a model was trained with. Stations
+    outside that list get no features, so their rows drop out.
+    """
     con.register("flow_src", flow.to_arrow())
     con.register("weather_src", weather.to_arrow())
     con.register(
@@ -107,8 +116,10 @@ def prepare_shared(
         CREATE OR REPLACE TABLE stations AS
         SELECT sid, avg(lat) AS lat, avg(lon) AS lon,
                row_number() OVER (ORDER BY sid) - 1 AS station
-        FROM snap GROUP BY sid
-        """
+        FROM snap WHERE ? IS NULL OR file_month IN (SELECT unnest(?))
+        GROUP BY sid
+        """,
+        [station_files and list(station_files)] * 2,
     )
     con.execute(
         """

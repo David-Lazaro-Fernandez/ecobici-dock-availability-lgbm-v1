@@ -23,6 +23,7 @@ the model frozen for the test months (FROZEN); ``p_lgbm`` stays the pre-register
 import argparse
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -115,7 +116,34 @@ def ece(df: pl.DataFrame, model: str) -> float:
     return float(((rel["observed"] - rel["predicted"]).abs() * rel["n"]).sum() / rel["n"].sum())
 
 
-def run_horizon(con, h: int, artifacts: Path, lag_window: str = "trailing") -> dict:
+@dataclass(frozen=True)
+class Period:
+    """A scored period, [start, end) in naive UTC. ``report=False`` periods are only
+    history for the rolling recalibrations (e.g. VAL_REPORT before a test month)."""
+
+    name: str
+    start: np.datetime64
+    end: np.datetime64
+    report: bool = True
+
+
+VAL_PERIODS = (Period("VAL_REPORT", REPORT_START, np.datetime64("2026-01-01T06:00")),)
+
+
+def fit_predict(
+    con,
+    h: int,
+    artifacts: Path,
+    periods: tuple[Period, ...] = VAL_PERIODS,
+    lag_window: str = "trailing",
+    expect: Path | None = None,
+) -> tuple[dict[str, pl.DataFrame], list[str], dict]:
+    """Train on TRAIN, calibrate on VAL_FIT, score every period. Returns one frame per
+    reported period with every model column, the saturated stations and model info.
+
+    ``expect``: a directory with the frozen artifacts. The fresh ones must match them
+    byte for byte, checked before anything is scored, or this raises.
+    """
     log(f"h={h}: examples + baselines")
     targets.build_examples(con, h)
     baselines.predict(con, h, refits=REFIT)
@@ -140,49 +168,92 @@ def run_horizon(con, h: int, artifacts: Path, lag_window: str = "trailing") -> d
     del X, y, Xf, yf
     model.save(artifacts, h)
 
-    # VAL_FIT rows are scored too, only as history for the rolling recalibration.
-    extra = [*BASELINES, *REFIT_BASELINES, "t"]
-    Xr, yr, meta = lgbm.matrix(con, feat, (*VAL_FIT, *VAL_REPORT), extra=extra)
+    # VAL_FIT rows are scored too, only as history for the rolling recalibrations.
+    months = sorted({*VAL_FIT, *VAL_REPORT, *(m for p in periods for m in _months(p))})
+    extra = [*BASELINES, *REFIT_BASELINES, "t", "month"]
+    Xr, yr, meta = lgbm.matrix(con, feat, tuple(months), extra=extra)
     raw = model.predict_raw(Xr)
     del Xr
     times = meta["t"].dt.convert_time_zone("UTC").dt.replace_time_zone(None)
-    recal = lgbm.rolling_recalibrate(times, raw, yr, score_from=REPORT_START)
-    in_report = times.to_numpy() >= REPORT_START
+    t = times.to_numpy()
+    in_fit = meta["month"].is_in(VAL_FIT).to_numpy()
+    in_period = {p.name: (t >= p.start) & (t < p.end) for p in periods}
+    # Rows outside VAL_FIT and the periods (e.g. 2026-09-01..10) are never history.
+    usable = in_fit | np.logical_or.reduce(list(in_period.values()))
     p_global = model.calibrator.predict(raw)
     # Subgroup recalibration on top of the global map, saturated_peak rows only.
     sub = meta.select(is_saturated_peak(saturated)).to_series().to_numpy()
-    fit_rows = sub & ~in_report
-    static = lgbm.Platt.fit(p_global[fit_rows], yr[fit_rows])
+    static = lgbm.Platt.fit(p_global[sub & in_fit], yr[sub & in_fit])
     static.save(artifacts / f"platt_sub_{h}.json")
-    p_sub, p_sub_roll = p_global.copy(), p_global.copy()
-    p_sub[sub] = static.predict(p_global[sub])
-    p_sub_roll[sub] = lgbm.rolling_recalibrate(
-        times.filter(pl.Series(sub)),
-        p_global[sub],
-        yr[sub],
-        score_from=REPORT_START,
-        fit=lgbm.Platt.fit,
-        min_rows=SUB_MIN_ROWS,
-        fallback=static,
-    )
-    # Baselines get the model's own calibration step: isotonic on VAL_FIT.
-    iso = {
-        f"{b}_iso": IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip")
-        .fit(meta[b].to_numpy()[~in_report], yr[~in_report])
-        .predict(meta[b].to_numpy())
-        for b in baselines.FITTED
-    }
-    report = meta.with_columns(
-        p_lgbm_raw=pl.Series(raw),
-        p_lgbm=pl.Series(p_global),
-        p_lgbm_recal=pl.Series(recal),
-        p_lgbm_sub=pl.Series(p_sub),
-        p_lgbm_sub_roll=pl.Series(p_sub_roll),
-        **{k: pl.Series(v) for k, v in iso.items()},
-    ).filter(pl.Series(in_report))
-    for t in (f"ex_{h}", f"pred_{h}", f"feat_{h}", f"train_{h}"):
-        con.execute(f"DROP TABLE IF EXISTS {t}")
+    if expect is not None:
+        _check_frozen(artifacts, expect, h)
 
+    def rolling(src: np.ndarray, mask: np.ndarray, period: Period, **kw) -> np.ndarray:
+        """Weekly recalibration of ``src`` on ``mask`` rows over ``period``; history is
+        the usable rows before it."""
+        rows = mask & usable & (t < period.end)
+        out = np.full(len(raw), np.nan)
+        out[rows] = lgbm.rolling_recalibrate(
+            times.filter(pl.Series(rows)), src[rows], yr[rows], score_from=period.start, **kw
+        )
+        return out
+
+    everywhere = np.ones(len(raw), dtype=bool)
+    reports = {}
+    for p in periods:
+        if not p.report:
+            continue
+        here = in_period[p.name]
+        # With too little history (2026-09's first week), the VAL_FIT map.
+        recal = rolling(raw, everywhere, p, fallback=model.calibrator)
+        roll_sub = rolling(
+            p_global, sub, p, fit=lgbm.Platt.fit, min_rows=SUB_MIN_ROWS, fallback=static
+        )
+        p_sub, p_sub_roll = p_global.copy(), p_global.copy()
+        p_sub[sub] = static.predict(p_global[sub])
+        p_sub_roll[sub] = roll_sub[sub]
+        # Baselines get the model's own calibration step: isotonic on VAL_FIT.
+        iso = {
+            f"{b}_iso": IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip")
+            .fit(meta[b].to_numpy()[in_fit], yr[in_fit])
+            .predict(meta[b].to_numpy())
+            for b in baselines.FITTED
+        }
+        reports[p.name] = meta.with_columns(
+            p_lgbm_raw=pl.Series(raw),
+            p_lgbm=pl.Series(p_global),
+            p_lgbm_recal=pl.Series(recal),
+            p_lgbm_sub=pl.Series(p_sub),
+            p_lgbm_sub_roll=pl.Series(p_sub_roll),
+            **{k: pl.Series(v) for k, v in iso.items()},
+        ).filter(pl.Series(here))
+    for name in (f"ex_{h}", f"pred_{h}", f"feat_{h}", f"train_{h}"):
+        con.execute(f"DROP TABLE IF EXISTS {name}")
+    info = {
+        "importance": lgbm.importance(model),
+        "best_iteration": model.booster.best_iteration,
+        "train_seconds": train_s,
+        "lags_present": present,
+    }
+    return reports, saturated, info
+
+
+def _months(p: Period) -> list[str]:
+    """Local months touched by a period (CDMX is UTC−6 all year)."""
+    lo = (p.start - np.timedelta64(6, "h")).astype("datetime64[M]")
+    hi = (p.end - np.timedelta64(6, "h") - np.timedelta64(1, "s")).astype("datetime64[M]")
+    return [str(m) for m in np.arange(lo, hi + 1)]
+
+
+def _check_frozen(fresh: Path, frozen: Path, h: int) -> None:
+    for name in (f"lgbm_{h}.txt", f"isotonic_{h}.json", f"platt_sub_{h}.json"):
+        if (fresh / name).read_bytes() != (frozen / name).read_bytes():
+            raise RuntimeError(f"{name} differs from the frozen {frozen / name}")
+    log(f"h={h}: model and calibrators match the frozen artifacts")
+
+
+def evaluate(report: pl.DataFrame, saturated: list[str], center: set[str], h: int) -> dict:
+    """Every metric, check and interval for one scored period."""
     log(f"h={h}: bootstrap")
     seg_rows, checks, ci = [], [], []
     for name, seg in segments(report, saturated).items():
@@ -253,7 +324,6 @@ def run_horizon(con, h: int, artifacts: Path, lag_window: str = "trailing") -> d
                     observed_hi=pl.Series(ohi).gather(rel[m]["bin"]),
                 )
 
-    center = center_stations(con)
     is_center = pl.col("sid").is_in(list(center))
     v8 = {
         m: {
@@ -270,15 +340,16 @@ def run_horizon(con, h: int, artifacts: Path, lag_window: str = "trailing") -> d
         "gap_ci": pl.DataFrame(gap_ci),
         "reliability": {m: rel[m] for m in (PRIMARY, FROZEN)},
         "v8_ece": v8,
-        "importance": lgbm.importance(model),
-        "best_iteration": model.booster.best_iteration,
-        "train_seconds": train_s,
-        "lags_present": present,
     }
 
 
-def render(results: list[dict]) -> str:
-    out = ["## Resultados (validación, 2025-10 → 2025-12)\n"]
+def run_horizon(con, h: int, artifacts: Path, lag_window: str = "trailing") -> dict:
+    reports, saturated, info = fit_predict(con, h, artifacts, lag_window=lag_window)
+    return {**evaluate(reports["VAL_REPORT"], saturated, center_stations(con), h), **info}
+
+
+def render(results: list[dict], title: str = "Resultados (validación, 2025-10 → 2025-12)") -> str:
+    out = [f"## {title}\n"]
     out.append(
         "`(ref)`: mejor línea base fijada de antemano (ajustada con TRAIN). "
         "`(ref justa)`: mejor de todas, incluidas `_tvf` (TRAIN + VAL_FIT) e `_iso` "
@@ -369,7 +440,7 @@ def render(results: list[dict]) -> str:
     return "\n".join(out)
 
 
-def plot_reliability(results: list[dict], path: Path) -> None:
+def plot_reliability(results: list[dict], path: Path, period: str = "VAL_REPORT") -> None:
     """Reliability diagram of PRIMARY and FROZEN on saturated_peak, one panel per
     horizon, with the day-block 95 % interval of each bin's observed rate and the
     ±target band. Hollow markers: bins under MIN_BIN_N, which the target ignores."""
@@ -412,7 +483,7 @@ def plot_reliability(results: list[dict], path: Path) -> None:
     axes[0][0].set_ylabel("Frecuencia observada de estación llena", color=muted, fontsize=9)
     axes[0][0].legend(loc="upper left", frameon=False, fontsize=8, labelcolor=ink)
     fig.suptitle(
-        "Calibración en saturadas + pico (VAL_REPORT). "
+        f"Calibración en saturadas + pico ({period}). "
         f"Banda gris: ±{TARGET_CALIBRATION}; barras: IC 95 % por días; "
         f"huecos: bins con n < {MIN_BIN_N:,}.",
         color=ink,

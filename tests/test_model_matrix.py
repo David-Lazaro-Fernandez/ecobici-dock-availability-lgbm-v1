@@ -202,3 +202,49 @@ def test_lag_window_trailing_vs_centered(tmp_path, window, expected):
 def test_lag_window_rejects_unknown(con):
     with pytest.raises(ValueError):
         mm.build(con, 30, lag_window="nearest")
+
+
+def test_station_list_can_be_pinned_to_files(tmp_path):
+    def snap(sid, minute):
+        return {
+            "station_id": sid,
+            "committed_at_utc": T0 + timedelta(minutes=minute),
+            "is_installed": True,
+            "is_returning": True,
+            "num_docks_available": 5,
+            "num_bikes_available": 15,
+            "num_docks_disabled": 0,
+            "capacity": 20,
+            "latitude": 19.43,
+            "longitude": -99.2,
+        }
+
+    # "AA" only appears in the later file and sorts between "A" and "B".
+    pl.DataFrame([snap("A", 0), snap("B", 0)]).write_parquet(tmp_path / "2025-03.parquet")
+    pl.DataFrame([snap("A", 15), snap("AA", 15), snap("B", 15)]).write_parquet(
+        tmp_path / "2026-01.parquet"
+    )
+    weather = pl.DataFrame({"time_utc": [T0], "temperature_2m": [15.0], "precipitation": [0.0]})
+    flow = pl.DataFrame(
+        schema={
+            "station_id": pl.String,
+            "slot": pl.Int64,
+            "weekend": pl.Boolean,
+            "arrivals_mean": pl.Float64,
+            "departures_mean": pl.Float64,
+            "net_flow_mean": pl.Float64,
+        }
+    )
+    con = duckdb.connect()
+    targets.load_snapshots(con, [tmp_path / "2025-03.parquet", tmp_path / "2026-01.parquet"])
+    mm.prepare_shared(con, flow, weather)
+    assert con.execute("SELECT sid, station FROM stations ORDER BY sid").fetchall() == [
+        ("A", 0),
+        ("AA", 1),
+        ("B", 2),
+    ]
+    mm.prepare_shared(con, flow, weather, station_files=("2025-03",))
+    assert con.execute("SELECT sid, station FROM stations ORDER BY sid").fetchall() == [
+        ("A", 0),
+        ("B", 1),
+    ]
