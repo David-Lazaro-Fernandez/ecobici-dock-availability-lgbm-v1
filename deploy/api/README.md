@@ -103,8 +103,8 @@ the server checkout tracks. If the branch is not the commit in `/opt/ecobici/DEP
 fast-forwards and runs `setup.sh`. Thus a push to that branch is a deploy to prod. A failed
 deploy runs again 5 minutes later. To deploy another branch, switch the checkout to it.
 
-`setup.sh` copies the tracked files of the checkout through a stage dir in `/opt`. With
-SELinux, `rsync` started by systemd cannot read `/home`.
+With SELinux, `rsync` started by systemd changes to the `rsync_t` domain, which cannot read
+`/home` or write `/opt`. `setup.sh` runs it with `runcon` in the context of the script.
 
 ```sh
 systemctl list-timers ecobici-autodeploy.timer
