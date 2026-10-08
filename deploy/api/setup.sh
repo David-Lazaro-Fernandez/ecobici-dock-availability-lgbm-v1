@@ -23,14 +23,11 @@ git_as_owner() {
 }
 
 mkdir -p "$APP_DIR"
-# SELinux: from a systemd unit, rsync runs as rsync_t, which cannot read /home or a unit's /tmp. A stage dir in
-# /opt gets usr_t, which rsync_t can read. git archive also leaves out untracked files.
-STAGE_DIR="$(mktemp -d -p /opt ecobici-stage.XXXXXX)"
-trap 'rm -rf "$STAGE_DIR"' EXIT
-git_as_owner archive HEAD | tar -x -C "$STAGE_DIR"
+# SELinux: from a systemd unit, rsync changes to rsync_t, which cannot read /home or write /opt. runcon keeps the
+# context of this script. A manual sudo run does not change the context, so it passed without runcon.
 # Excluded paths are not deleted, so the copied model files stay.
-rsync -a --delete --exclude .venv --exclude artifacts --exclude data --exclude raw --exclude web \
-  --exclude .env --exclude /api.env --exclude /DEPLOYED "$STAGE_DIR"/ "$APP_DIR"/
+runcon "$(id -Z)" rsync -a --delete --exclude .venv --exclude .git --exclude artifacts --exclude data \
+  --exclude raw --exclude web --exclude .env --exclude /api.env --exclude /DEPLOYED "$REPO_DIR"/ "$APP_DIR"/
 
 if ! command -v uv &>/dev/null; then
   curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
