@@ -1,4 +1,5 @@
-# Replace api.example.com with a domain whose DNS A record points to this machine.
+# Replace api.example.com with a host name that points to this machine, for example a
+# DuckDNS subdomain.
 # Caddy gets and renews the HTTPS certificate by itself.
 api.example.com {
 	reverse_proxy 127.0.0.1:8000
