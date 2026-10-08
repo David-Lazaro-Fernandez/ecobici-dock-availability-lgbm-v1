@@ -2,7 +2,8 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Lugar libre',
+  title: '¡Sí hay!',
+  icons: { icon: '/yes_mex.ico', apple: '/yes_mex.png' },
   description:
     'Dónde dejar la bici cerca de tu destino en la Ciudad de México, con la probabilidad de encontrar lugar al llegar.',
 };

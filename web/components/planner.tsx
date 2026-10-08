@@ -12,6 +12,7 @@ import { type SortKey, sortCandidates } from '@/lib/sort';
 import { type Leg, useTripRoutes } from '@/lib/routes';
 import { FREE_LEGEND, pct } from '@/lib/format';
 import { FREE_STEPS } from '@/components/trip-map';
+import { Help } from '@/components/help';
 
 const TripMap = dynamic(() => import('@/components/trip-map'), { ssr: false });
 
@@ -371,9 +372,12 @@ export function Planner() {
   return (
     <>
       <header className="topbar">
-        <span className="topbar__brand">Lugar libre</span>
+        <span className="topbar__brand">
+          <img className="topbar__logo" src="/yes_mex.png" alt="" /> ¡Sí hay!
+        </span>
         <div className="topbar__end">
           {status && <span className={`topbar__status ${live.error ? 'is-error' : old ? 'is-old' : ''}`}>{status}</span>}
+          <Help />
         </div>
       </header>
 

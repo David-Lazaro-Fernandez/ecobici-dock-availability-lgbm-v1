@@ -77,6 +77,16 @@ export function Clock() {
   );
 }
 
+export function Help() {
+  return (
+    <svg {...base}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M9.6 9.5a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.4" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="12" cy="16.8" r="0.6" fill="currentColor" />
+    </svg>
+  );
+}
+
 export function Bike() {
   return (
     <svg {...base}>

@@ -11,6 +11,25 @@ import type { Leg } from '@/lib/routes';
 import { pct } from '@/lib/format';
 
 export const BASEMAP_STYLE = 'https://tiles.openfreemap.org/styles/positron';
+// Positron layers recolored with the palette of the help illustrations. A layer that the style drops is skipped.
+type ColorPaint = 'background-color' | 'fill-color' | 'fill-outline-color' | 'line-color';
+const BASEMAP_PAINT: [layer: string, property: ColorPaint, cssVar: string][] = [
+  ['background', 'background-color', '--map-land'],
+  ['road_area_pier', 'fill-color', '--map-land'],
+  ['road_pier', 'line-color', '--map-land'],
+  ['landuse_residential', 'fill-color', '--map-residential'],
+  ['park', 'fill-color', '--map-park'],
+  ['landcover_wood', 'fill-color', '--map-park'],
+  ['water', 'fill-color', '--map-water'],
+  ['building', 'fill-color', '--map-building'],
+  ['building', 'fill-outline-color', '--map-street'],
+  ['highway_path', 'line-color', '--map-street'],
+  ['highway_minor', 'line-color', '--map-street'],
+  ['highway_major_casing', 'line-color', '--map-street'],
+  ['highway_motorway_casing', 'line-color', '--map-street'],
+  ['highway_motorway_bridge_casing', 'line-color', '--map-street'],
+  ['tunnel_motorway_casing', 'line-color', '--map-street'],
+];
 // Served from public/ (scripts/copy-worker.mjs). When bundled, MapLibre cannot find the worker next to its module.
 const WORKER_URL = '/maplibre-gl-worker.mjs';
 const CIRCLE_STEPS = 64;
@@ -175,6 +194,7 @@ export default function TripMap({
       'top-left',
     );
     m.on('load', () => {
+      for (const [layer, property, cssVar] of BASEMAP_PAINT) if (m.getLayer(layer)) m.setPaintProperty(layer, property, v(cssVar));
       for (const id of ['stations', 'radius', 'walk', 'bike', 'candidates', 'pickup', 'start']) m.addSource(id, { type: 'geojson', data: collection([]) });
       m.addLayer({
         id: 'stations',
@@ -213,6 +233,7 @@ export default function TripMap({
         // White is 2.27:1 on the lightest band, so use ink there.
         paint: { 'text-color': ['case', ['<', ['get', 'p_free'], FREE_STEPS[0]], ink, paper] },
       });
+      m.addLayer({ id: 'start-halo', type: 'circle', source: 'start', paint: { 'circle-radius': 20, 'circle-color': startAndPickup, 'circle-opacity': 0.22 } });
       m.addLayer({ id: 'pickup', type: 'circle', source: 'pickup', paint: { 'circle-radius': 13, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': startAndPickup, 'circle-stroke-width': 3 } });
       m.addLayer({ id: 'start', type: 'circle', source: 'start', paint: { 'circle-radius': 8, 'circle-color': startAndPickup, 'circle-stroke-color': paper, 'circle-stroke-width': 3 } });
       ready.current = true;

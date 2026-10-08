@@ -20,6 +20,12 @@
   --station-outside-trip: #b9b8b2;
   --station-no-forecast: #c3c2b7;
   --route-line: #3987e5;
+  --map-land: #f4f7f2;
+  --map-residential: #eef2ec;
+  --map-building: #e6ece3;
+  --map-street: #dde6da;
+  --map-park: #cfe9d5;
+  --map-water: #cfe0e6;
   --free-less-than-50: #63bf75;
   --free-50-to-80: #168f3d;
   --free-80-to-95: #0e6b2e;
@@ -91,8 +97,16 @@ input:focus-visible {
 }
 
 .topbar__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-weight: 800;
   letter-spacing: -0.01em;
+}
+
+.topbar__logo {
+  width: auto;
+  height: 28px;
 }
 
 .topbar__status {
@@ -116,6 +130,171 @@ input:focus-visible {
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.topbar__help {
+  flex: none;
+  width: 32px;
+  height: 32px;
+}
+
+.topbar__help svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* Help: onboarding steps in a modal over an ink veil. Dark green, with white text and controls. */
+
+.help {
+  width: min(440px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  padding: 0;
+  border: 0;
+  border-radius: 20px;
+  color: var(--paper);
+  background: var(--free-95-or-more);
+}
+
+.help::backdrop {
+  background: var(--ink-30);
+}
+
+.help__body {
+  display: grid;
+  gap: 16px;
+  padding: 18px 22px 22px;
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.help__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.help__brand {
+  font-weight: 800;
+}
+
+.help .icon-btn {
+  color: var(--paper);
+}
+
+.help .icon-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.help :focus-visible {
+  outline-color: var(--paper);
+}
+
+.help h2 {
+  margin: 0;
+  font-size: 1.45rem;
+  line-height: 1.2;
+}
+
+.help p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.help__step {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 14px;
+  min-height: 350px;
+  text-align: center;
+}
+
+.help__art {
+  width: 100%;
+  max-width: 300px;
+  height: auto;
+  margin-bottom: 6px;
+}
+
+.help__legend {
+  width: 100%;
+  margin-top: 6px;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.help__legend .swatch {
+  outline: 1.5px solid var(--paper);
+}
+
+.help__dots {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+.help__dot {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.4);
+  transition: width 0.2s var(--ease-out);
+}
+
+.help__dot.is-on {
+  width: 24px;
+  background: var(--paper);
+}
+
+.help__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.help__dont-show {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+}
+
+.help__dont-show input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--paper);
+}
+
+.help__nav {
+  display: flex;
+  gap: 6px;
+}
+
+.help__back {
+  padding: 10px 14px;
+  border-radius: 999px;
+  color: var(--paper);
+  font-weight: 600;
+}
+
+.help__back:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.help__ok {
+  padding: 10px 22px;
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--free-95-or-more);
+  font-weight: 700;
+}
+
+.help__ok:hover {
+  background: var(--highlight-wash);
 }
 
 /* Stage: the map fills it; without a start, a veil and the title cover it and the bar sits in the middle. */
