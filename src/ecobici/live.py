@@ -14,6 +14,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import duckdb
 import lightgbm as lgb
@@ -29,6 +30,9 @@ from ecobici.eval.splits import TRAIN, VALIDATION
 from ecobici.features import model_matrix, targets
 from ecobici.ingest import maxhalford
 from ecobici.models import lgbm
+
+if TYPE_CHECKING:
+    from ecobici.bundle import Bundle
 
 FORECAST_API = "https://api.open-meteo.com/v1/forecast"
 LOOKBACK = timedelta(minutes=model_matrix.LAGS_MIN[-1] + model_matrix.LAG_TOLERANCE_MIN + 2)
@@ -183,15 +187,16 @@ def forecast_weather(
 def predict(
     captures: list[Path],
     information: dict,
-    history_files: list[Path],
-    flow: pl.DataFrame,
+    bundle: "Bundle",
     weather: pl.DataFrame,
-    saturated: dict[int, list[str]],
     frozen: dict[int, Frozen],
-    duckdb_memory: str = "6GB",
     target: str = "full",
+    duckdb_memory: str = "1GB",
 ) -> pl.DataFrame:
     """P(``target`` state at t + h) for each in-service station at the last capture t.
+
+    The station list, the station profiles, the flows and the saturated stations come
+    from ``bundle``, so only the recent ``captures`` are read.
 
     One row per station: ``sid``, ``t`` and, per horizon, ``p_full_{h}`` (frozen model),
     ``p_lgbm_{h}`` (no subgroup map) and ``subgroup_{h}``. For ``empty``, ``p_full_{h}``
@@ -200,13 +205,28 @@ def predict(
     if not captures:
         raise ValueError("no captures")
     at = fetched_at(captures[-1])
-    con = duckdb.connect(config={"memory_limit": duckdb_memory})
-    with tempfile.TemporaryDirectory() as tmp:
-        # This file month is not in MODEL_FILES, so it does not change the station list.
-        live = Path(tmp) / f"live_{at:%Y-%m}.parquet"
-        capture_rows(captures, information).write_parquet(live)
-        targets.load_snapshots(con, [*history_files, live], target=target)
-    model_matrix.prepare_shared(con, flow, weather, station_files=MODEL_FILES)
+    # Close the connection: the service predicts every 2 min, for days.
+    with duckdb.connect(config={"memory_limit": duckdb_memory}) as con:
+        with tempfile.TemporaryDirectory() as tmp:
+            live = Path(tmp) / f"live_{at:%Y-%m}.parquet"
+            capture_rows(captures, information).write_parquet(live)
+            targets.load_snapshots(con, [live], target=target)
+        model_matrix.prepare_shared(
+            con,
+            bundle.flow,
+            weather,
+            stations=bundle.stations,
+            st_profile=bundle.st_profile[target],
+        )
+        return _score(con, at, frozen, bundle.saturated[target])
+
+
+def _score(
+    con: duckdb.DuckDBPyConnection,
+    at: datetime,
+    frozen: dict[int, Frozen],
+    saturated: dict[int, list[str]],
+) -> pl.DataFrame:
     month = at.astimezone(config.LOCAL_TZ).strftime("%Y-%m")
 
     out = None

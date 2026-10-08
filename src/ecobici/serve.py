@@ -16,12 +16,10 @@ from pathlib import Path
 
 import polars as pl
 
-from ecobici import config, live
+from ecobici import bundle, config, live
 from ecobici.collector.report import fetched_at
 from ecobici.devtools import stations as gbfs
-from ecobici.eval.model_report import trip_flow
 from ecobici.ingest import captures as s3
-from ecobici.ingest import trips as trip_ingest
 from ecobici.recommender import plan as rp
 
 # Captures arrive every 2 min.
@@ -30,7 +28,6 @@ S3_WINDOW = live.LOOKBACK + timedelta(minutes=5)
 # The station_information feed is captured once a day, at 06:00 UTC.
 INFO_WINDOW = timedelta(days=2)
 WEATHER_EVERY = timedelta(minutes=30)
-RIDE_HISTORY = timedelta(days=365)
 # From: model_report --target empty --horizons 15.
 EMPTY_ARTIFACTS = Path("artifacts/empty")
 
@@ -45,13 +42,15 @@ class Live:
 
 
 class LiveService:
-    def __init__(self, raw: Path = Path("raw"), use_s3: bool = True):
+    def __init__(
+        self, raw: Path = Path("raw"), use_s3: bool = True, bundle_dir: Path = bundle.BUNDLE_DIR
+    ):
         self.raw = raw
+        self.bundle_dir = bundle_dir
         self.use_s3 = use_s3
         self.s3_error: str | None = None
         self._lock = threading.RLock()
         self._model: dict | None = None
-        self._rides: pl.DataFrame | None = None
         self._fetched_at = datetime.min.replace(tzinfo=UTC)
         self._weather: tuple[datetime, pl.DataFrame] | None = None
         self._live: tuple[str, Live] | None = None
@@ -60,29 +59,15 @@ class LiveService:
     def model(self) -> dict:
         with self._lock:
             if self._model is None:
-                files = live.model_files()
-                self._model = {
-                    "frozen": live.load_frozen(),
-                    "files": files,
-                    "saturated": live.saturated_by_horizon(files),
-                    "flow": trip_flow(trip_ingest.DEFAULT_DIR, self.raw),
-                }
+                self._model = {"frozen": live.load_frozen(), "bundle": bundle.load(self.bundle_dir)}
                 # Optional: the empty-station model exists only after its training run.
                 h = (rp.EMPTY_HORIZON,)
                 if (EMPTY_ARTIFACTS / f"lgbm_{h[0]}.txt").exists():
-                    self._model["empty"] = {
-                        "frozen": live.load_frozen(EMPTY_ARTIFACTS, h),
-                        "saturated": live.saturated_by_horizon(files, h, target="empty"),
-                    }
+                    self._model["empty"] = live.load_frozen(EMPTY_ARTIFACTS, h)
             return self._model
 
     def rides(self) -> pl.DataFrame:
-        with self._lock:
-            if self._rides is None:
-                since = datetime.now(config.LOCAL_TZ) - RIDE_HISTORY
-                codes = trip_ingest.station_code_map(self.information())
-                self._rides = rp.ride_times(trip_ingest.DEFAULT_DIR, codes, since)
-            return self._rides
+        return self.model()["bundle"].rides
 
     def information(self) -> dict:
         return gbfs.latest_information(self.raw) or gbfs.fetch_live(config.STATION_INFORMATION_URL)
@@ -136,27 +121,12 @@ class LiveService:
             at = fetched_at(latest)
             m, info, weather = self.model(), self.information(), self.weather()
             t0 = time.time()
-            pred = live.predict(
-                live.recent_captures(self.raw, at),
-                info,
-                m["files"],
-                m["flow"],
-                weather,
-                m["saturated"],
-                m["frozen"],
-            )
+            captures = live.recent_captures(self.raw, at)
+            pred = live.predict(captures, info, m["bundle"], weather, m["frozen"])
             if "empty" in m:
-                e = m["empty"]
                 h = rp.EMPTY_HORIZON
                 empty = live.predict(
-                    live.recent_captures(self.raw, at),
-                    info,
-                    m["files"],
-                    m["flow"],
-                    weather,
-                    e["saturated"],
-                    e["frozen"],
-                    target="empty",
+                    captures, info, m["bundle"], weather, m["empty"], target="empty"
                 ).select("sid", pl.col(f"p_full_{h}").alias(f"p_empty_{h}"))
                 pred = pred.join(empty, on="sid", how="left")
             snap = gbfs.snapshot_frame(info, gbfs.read_capture(latest)).stations

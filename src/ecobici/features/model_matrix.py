@@ -75,6 +75,8 @@ def prepare_shared(
     flow: pl.DataFrame,
     weather: pl.DataFrame,
     station_files: tuple[str, ...] | None = None,
+    stations: pl.DataFrame | None = None,
+    st_profile: pl.DataFrame | None = None,
 ) -> None:
     """Per-snapshot neighbour state, weather, flows, station profiles and holidays.
 
@@ -82,6 +84,9 @@ def prepare_shared(
     only from the ``station_files`` file months. Pin it to the training files: more
     months must not change the station codes of a trained model. Stations outside the
     list get no features.
+
+    ``stations`` and ``st_profile``: the same tables, computed before (``ecobici.bundle``).
+    With them, ``snap`` needs only the recent readings.
     """
     con.register("flow_src", flow.to_arrow())
     con.register("weather_src", weather.to_arrow())
@@ -118,16 +123,20 @@ def prepare_shared(
         FROM weather_src
         """
     )
-    con.execute(
-        """
-        CREATE OR REPLACE TABLE stations AS
-        SELECT sid, avg(lat) AS lat, avg(lon) AS lon,
-               row_number() OVER (ORDER BY sid) - 1 AS station
-        FROM snap WHERE ? IS NULL OR file_month IN (SELECT unnest(?))
-        GROUP BY sid
-        """,
-        [station_files and list(station_files)] * 2,
-    )
+    if stations is not None:
+        con.register("stations_src", stations.to_arrow())
+        con.execute("CREATE OR REPLACE TABLE stations AS SELECT * FROM stations_src")
+    else:
+        con.execute(
+            """
+            CREATE OR REPLACE TABLE stations AS
+            SELECT sid, avg(lat) AS lat, avg(lon) AS lon,
+                   row_number() OVER (ORDER BY sid) - 1 AS station
+            FROM snap WHERE ? IS NULL OR file_month IN (SELECT unnest(?))
+            GROUP BY sid
+            """,
+            [station_files and list(station_files)] * 2,
+        )
     con.execute(
         """
         CREATE OR REPLACE TABLE nb AS
@@ -152,20 +161,24 @@ def prepare_shared(
         GROUP BY ALL
         """
     )
-    con.execute(
-        """
-        CREATE OR REPLACE TABLE st_profile AS
-        SELECT sid,
-               avg(is_full::int) FILTER (WHERE ok) AS st_full_rate,
-               avg(is_full::int) FILTER (
-                   WHERE ok AND isodow(t) < 6
-                     AND extract(hour FROM t) * 60 + extract(minute FROM t)
-                         BETWEEN 510 AND 630) AS st_peak_full_rate
-        FROM snap WHERE month IN (SELECT unnest(?))
-        GROUP BY sid
-        """,
-        [list(TRAIN)],
-    )
+    if st_profile is not None:
+        con.register("st_profile_src", st_profile.to_arrow())
+        con.execute("CREATE OR REPLACE TABLE st_profile AS SELECT * FROM st_profile_src")
+    else:
+        con.execute(
+            """
+            CREATE OR REPLACE TABLE st_profile AS
+            SELECT sid,
+                   avg(is_full::int) FILTER (WHERE ok) AS st_full_rate,
+                   avg(is_full::int) FILTER (
+                       WHERE ok AND isodow(t) < 6
+                         AND extract(hour FROM t) * 60 + extract(minute FROM t)
+                             BETWEEN 510 AND 630) AS st_peak_full_rate
+            FROM snap WHERE month IN (SELECT unnest(?))
+            GROUP BY sid
+            """,
+            [list(TRAIN)],
+        )
 
 
 def _lag_sql(
