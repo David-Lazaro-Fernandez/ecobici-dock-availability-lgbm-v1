@@ -7,10 +7,10 @@ import dynamic from 'next/dynamic';
 import { type CSSProperties, type SyntheticEvent, type KeyboardEvent, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { type Candidate, type PlanResponse, type StationsResponse, useApi } from '@/lib/api';
 import { type PlacesFile, type Suggestion, bbox, buildIndex, cachedOnline, geocode, loadPlaces, merge, plain, searchPlaces } from '@/lib/places';
-import { Clock, Close, Dock, Locate, Pin, Send, Sliders, Walk } from '@/components/icons';
+import { Bike, Clock, Close, Dock, Locate, More, Pin, Send, Sliders, Walk } from '@/components/icons';
 import { type SortKey, sortCandidates } from '@/lib/sort';
 import { type Leg, useTripRoutes } from '@/lib/routes';
-import { pct } from '@/lib/format';
+import { FREE_LEGEND, pct } from '@/lib/format';
 import { FREE_STEPS } from '@/components/trip-map';
 
 const TripMap = dynamic(() => import('@/components/trip-map'), { ssr: false });
@@ -26,8 +26,9 @@ const SUGGEST_LIMIT = 5;
 const DOCK_OVERLAP = 170;
 const CARD_WIDTH = 420;
 const TZ = 'America/Mexico_City';
+// In prod, the status shows only when the station data is old or missing.
+const DEV = process.env.NODE_ENV === 'development';
 const clock = new Intl.DateTimeFormat('es-MX', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: TZ });
-const FREE_LEGEND = ['< 50 %', '50–80 %', '80–95 %', '≥ 95 %'];
 
 type End = 'from' | 'to';
 type Picked = { lat: number; lng: number; label: string; stationId?: string };
@@ -35,8 +36,14 @@ type Picked = { lat: number; lng: number; label: string; stationId?: string };
 const minutes = (m: number) => `${Math.max(1, Math.round(m))} min`;
 const meters = (m: number) => (m < 950 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(1)} km`);
 const shortName = (name: string) => name.replace(/^CE-\d+\s*/, '');
-// Some stations have the same name ("Liverpool - Génova" twice). The code tells them apart.
-const Code = ({ code }: { code: string }) => <span className="code">{code}</span>;
+// Some stations have the same name ("Liverpool - Génova" twice). Show the code only to tell those apart.
+const Code = ({ code, shown }: { code: string; shown: boolean }) => (shown ? <span className="code">{code}</span> : null);
+function sharedNames(stations: { name: string }[]) {
+  const seen = new Set<string>();
+  const shared = new Set<string>();
+  for (const { name } of stations) (seen.has(name) ? shared : seen).add(name);
+  return shared;
+}
 const whyNoBike = (s: { state: string }) =>
   s.state === 'unavailable' ? 'está fuera de servicio' : s.state === 'stale' ? 'no envía datos recientes' : 'no tiene bicis ahora';
 // The ranking uses the arrival at the destination, so the row shows that time, not the arrival at the station.
@@ -44,6 +51,9 @@ const atDestination = (c: Candidate) => new Date(new Date(c.arrive_at).getTime()
 const band = (p: number | null) => (p == null ? 'none' : String(FREE_STEPS.filter((s) => p >= s).length));
 // Show the risk of an empty pickup only when it can change the decision.
 const EMPTY_RISK_SHOWN = 0.1;
+const ROWS_FOLDED = 2;
+// Captures arrive every 2 min. Older data is not live.
+const OLD_AFTER_MIN = 10;
 
 const PHONE = '(max-width: 700px)';
 function usePhone() {
@@ -64,24 +74,33 @@ const SORTS: { key: SortKey; label: string; hint: string; icon: () => React.JSX.
   { key: 'free', label: 'Disponibilidad', hint: 'Ordenar por probabilidad de lugar libre', icon: Dock },
 ];
 
-function routeText(legs: Leg[]) {
-  const bike = legs.find((l) => l.mode === 'bike');
-  const walk = legs.at(-1)?.mode === 'walk' ? legs.at(-1) : undefined;
-  const approx = (l: Leg) => (l.routed ? '' : '~');
-  const parts = [];
-  if (bike) parts.push(`En bici ${approx(bike)}${meters(bike.distance_m)}${bike.duration_min != null ? ` (${minutes(bike.duration_min)})` : ''}`);
-  if (walk) parts.push(`a pie ${approx(walk)}${meters(walk.distance_m)}`);
-  return parts.join(' · ');
+// The icon tells the kind of value. The label is for the tooltip and for screen readers.
+function Fact({ icon: Icon, label, children }: { icon: () => React.JSX.Element; label: string; children: React.ReactNode }) {
+  return (
+    <span className="fact" title={label}>
+      <Icon />
+      <span className="sr-only">{label}: </span>
+      {children}
+    </span>
+  );
 }
 
-function Row({ c, selected, route, onSelect }: { c: Candidate; selected: boolean; route: string; onSelect: () => void }) {
+// The row facts already show the walk, so the selected row adds only the bike leg.
+function bikeText(legs: Leg[]) {
+  const bike = legs.find((l) => l.mode === 'bike');
+  if (!bike) return '';
+  const approx = bike.routed ? '' : '~';
+  return `${approx}${meters(bike.distance_m)}${bike.duration_min != null ? ` · ${minutes(bike.duration_min)}` : ''}`;
+}
+
+function Row({ c, selected, bike, withCode, onSelect }: { c: Candidate; selected: boolean; bike: string; withCode: boolean; onSelect: () => void }) {
   if (!c.recommendable)
     return (
       <li className="row is-muted">
         <span className="row__rank" aria-hidden="true" />
         <span className="row__body">
           <strong>
-            {shortName(c.name)} <Code code={c.code} />
+            {shortName(c.name)} <Code code={c.code} shown={withCode} />
           </strong>
           <span className="muted">{c.state === 'stale' ? 'Sin datos recientes' : 'Fuera de servicio'}</span>
         </span>
@@ -93,13 +112,27 @@ function Row({ c, selected, route, onSelect }: { c: Candidate; selected: boolean
         <span className="row__rank">{c.rank}</span>
         <span className="row__body">
           <strong>
-            {shortName(c.name)} <Code code={c.code} />
+            {shortName(c.name)} <Code code={c.code} shown={withCode} />
             {c.rank === 1 && <span className="row__tag">Mejor</span>}
           </strong>
-          <span className="muted">
-            Llegas a tu destino {clock.format(atDestination(c))} · {meters(c.walk_m)} a pie · {c.docks ?? '—'} libres ahora
+          <span className="facts muted">
+            <Fact icon={Clock} label="Llegas a tu destino">
+              {clock.format(atDestination(c))}
+            </Fact>
+            <Fact icon={Walk} label="A pie hasta tu destino">
+              {meters(c.walk_m)}
+            </Fact>
+            <Fact icon={Dock} label="Lugares libres ahora">
+              {c.docks ?? '—'} libres
+            </Fact>
           </span>
-          {selected && route && <span className="row__route">{route}</span>}
+          {selected && bike && (
+            <span className="facts row__route">
+              <Fact icon={Bike} label="En bici">
+                {bike}
+              </Fact>
+            </span>
+          )}
         </span>
         <span className="card__chance">
           <i className={`swatch swatch--${band(c.p_free)}`} aria-hidden="true" />
@@ -128,8 +161,17 @@ export function Planner() {
   const [sortBy, setSortBy] = useState<SortKey>('time');
   // The drop-off picked in the list or on the map, for one search only.
   const [picked, setPicked] = useState<{ searchKey: string; id: string } | null>(null);
+  // The search whose full list is open. A new search folds the list again.
+  const [unfolded, setUnfolded] = useState('');
   const [tick, setTick] = useState(0);
   const located = start !== null;
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e: globalThis.KeyboardEvent) => e.key === 'Escape' && setMenu(false);
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [menu]);
 
   useEffect(() => {
     const t = setInterval(() => setTick((n) => n + 1), REFRESH_MS);
@@ -245,12 +287,24 @@ export function Planner() {
     e.preventDefault();
   }
 
+  const open = unfolded === searchKey;
+  const sorted = result ? sortCandidates(result.candidates, sortBy) : [];
+  // A drop-off picked on the map stays in the list.
+  const rows = open ? sorted : sorted.filter((c, i) => i < ROWS_FOLDED || c.id === dropoff?.id);
+  const folded = sorted.length - rows.length;
+  const shared = sharedNames(result ? [result.pickup, ...result.candidates] : []);
+
   const captured = live.data ? new Date(live.data.captured_at) : null;
   const ageMin = captured ? (Date.now() - captured.getTime()) / 60_000 : null;
+  const old = ageMin != null && ageMin > OLD_AFTER_MIN;
   const status = live.error
     ? live.error
     : captured
-      ? `En vivo · estaciones leídas a las ${clock.format(captured)}${ageMin! > 10 ? ` (hace ${Math.round(ageMin!)} min)` : ''}`
+      ? old
+        ? `Sin datos recientes · última lectura a las ${clock.format(captured)} (hace ${Math.round(ageMin!)} min)`
+        : DEV
+          ? `En vivo · estaciones leídas a las ${clock.format(captured)}`
+          : ''
       : 'Cargando estaciones…';
 
   const context = !start
@@ -273,7 +327,20 @@ export function Planner() {
   };
 
   const menuBox = (
-    <div className={`menu ${menu ? 'is-open' : ''}`} aria-hidden={!menu}>
+    <div
+      className={`menu ${phone ? 'menu--sheet' : ''} ${menu ? 'is-open' : ''}`}
+      role={phone ? 'dialog' : undefined}
+      aria-label={phone ? 'Opciones' : undefined}
+      aria-hidden={!menu}
+    >
+      {phone && (
+        <div className="menu__head">
+          <strong>Opciones</strong>
+          <button type="button" className="menu__close" aria-label="Cerrar opciones" onClick={() => setMenu(false)}>
+            <Close />
+          </button>
+        </div>
+      )}
       <div className="menu__row">
         <span className="menu__label">
           <Walk /> Máximo a pie hasta tu destino
@@ -305,7 +372,9 @@ export function Planner() {
     <>
       <header className="topbar">
         <span className="topbar__brand">Lugar libre</span>
-        <span className={`topbar__status ${live.error ? 'is-error' : ageMin != null && ageMin > 10 ? 'is-old' : ''}`}>{status}</span>
+        <div className="topbar__end">
+          {status && <span className={`topbar__status ${live.error ? 'is-error' : old ? 'is-old' : ''}`}>{status}</span>}
+        </div>
       </header>
 
       <section className={`stage ${located ? 'is-located' : ''}`} style={{ '--card-width': `${CARD_WIDTH}px` } as CSSProperties}>
@@ -363,13 +432,20 @@ export function Planner() {
                         {shortName(result.requested.name)} {whyNoBike(result.requested)}.
                       </span>
                     )}
-                    Toma la bici en <strong>{shortName(result.pickup.name)}</strong> <Code code={result.pickup.code} />
-                    <span className="muted">
-                      {result.pickup.walk_m > 0 ? `A ${meters(result.pickup.walk_m)} · ` : ''}
-                      {result.pickup.bikes ?? '—'} bicis
-                      {(result.pickup.p_empty_at_arrival ?? 0) >= EMPTY_RISK_SHOWN &&
-                        ` · ${pct(result.pickup.p_empty_at_arrival)} de que se acaben antes de que llegues`}
+                    Toma la bici en <strong>{shortName(result.pickup.name)}</strong> <Code code={result.pickup.code} shown={shared.has(result.pickup.name)} />
+                    <span className="facts muted">
+                      {result.pickup.walk_m > 0 && (
+                        <Fact icon={Walk} label="A pie hasta la estación">
+                          {meters(result.pickup.walk_m)}
+                        </Fact>
+                      )}
+                      <Fact icon={Bike} label="Bicis ahora">
+                        {result.pickup.bikes ?? '—'} bicis
+                      </Fact>
                     </span>
+                    {(result.pickup.p_empty_at_arrival ?? 0) >= EMPTY_RISK_SHOWN && (
+                      <span className="muted">{pct(result.pickup.p_empty_at_arrival)} de que se acaben antes de que llegues</span>
+                    )}
                   </p>
                 </div>
                 <div className="sort" role="radiogroup" aria-label="Ordenar estaciones">
@@ -390,16 +466,23 @@ export function Planner() {
                   ))}
                 </div>
                 <ul className="card__list">
-                  {sortCandidates(result.candidates, sortBy).map((c) => (
+                  {rows.map((c) => (
                     <Row
                       key={c.id}
                       c={c}
                       selected={c.id === dropoff?.id}
-                      route={c.id === dropoff?.id ? routeText(legs) : ''}
+                      withCode={shared.has(c.name)}
+                      bike={c.id === dropoff?.id ? bikeText(legs) : ''}
                       onSelect={() => selectDropoff(c.id)}
                     />
                   ))}
                 </ul>
+                {(folded > 0 || open) && result.candidates.length > ROWS_FOLDED && (
+                  <button type="button" className="card__more" aria-expanded={open} onClick={() => setUnfolded(open ? '' : searchKey)}>
+                    <More />
+                    {open ? 'Ver menos' : `Ver ${folded} más`}
+                  </button>
+                )}
                 <div className="card__legend">
                   <p className="card__legend-title">Probabilidad de lugar libre al llegar</p>
                   <div className="card__legend-items">
@@ -416,8 +499,10 @@ export function Planner() {
         )}
 
         {phone && <div className={`menu__scrim ${menu ? 'is-open' : ''}`} aria-hidden="true" onClick={() => setMenu(false)} />}
+        {/* The dock has a transform, so a fixed sheet inside it would stay on the dock. */}
+        {phone && menuBox}
         <div className="dock">
-          {menuBox}
+          {!phone && menuBox}
           {located && (
             <div className="dock__ends" role="group" aria-label="Viaje">
               <button type="button" className={`end ${editing === 'from' ? 'is-on' : ''}`} onClick={() => setEditing('from')}>
@@ -475,7 +560,11 @@ export function Planner() {
                 className={`ask__icon ${menu ? 'is-on' : ''}`}
                 aria-label="Opciones: distancia a pie y minutos perdidos"
                 aria-expanded={menu}
-                onClick={() => setMenu((m) => !m)}
+                onClick={() => {
+                  // Close the phone keyboard, so the options stay in view.
+                  if (!menu && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+                  setMenu((m) => !m);
+                }}
               >
                 <Sliders />
               </button>
@@ -516,9 +605,7 @@ export function Planner() {
               </button>
             </form>
           </div>
-          {(!located || notice) && (
-            <p className="stage__hint">{notice || 'Escribe desde dónde sales o usa tu ubicación. Luego elige a dónde vas.'}</p>
-          )}
+          {notice && <p className="stage__hint">{notice}</p>}
         </div>
       </section>
     </>

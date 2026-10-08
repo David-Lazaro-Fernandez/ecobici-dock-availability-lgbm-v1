@@ -42,8 +42,11 @@ export function Pin() {
 export function Dock() {
   return (
     <svg {...base}>
-      <rect x="5" y="3.5" width="14" height="17" rx="2.5" />
-      <path d="M9 8h6M9 12h6M9 16h3" strokeLinecap="round" />
+      <path d="M2.5 20.5V6L6 3.5v17Z" strokeLinejoin="round" />
+      {/* The post hides the left part of the front wheel, as in the Ecobici logo. The bike is in the dock. */}
+      <path d="M7.6 12.3A3.8 3.8 0 1 1 7.6 19.7" />
+      <circle cx="19.6" cy="16" r="3.5" />
+      <path d="M8.5 16 11 9M10 8.5h3M10.7 11.5 15 16h4.6M15 16l1.8-6.5M15.6 9.5h2.7" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -70,6 +73,26 @@ export function Clock() {
     <svg {...base}>
       <circle cx="12" cy="12" r="8.5" />
       <path d="M12 7.5V12l3 2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function Bike() {
+  return (
+    <svg {...base}>
+      <circle cx="6.5" cy="14" r="3.8" />
+      <circle cx="17.6" cy="14" r="3.5" />
+      <path d="M6.5 14 9 7M8 6.5h3M8.7 9.5 13 14h4.6M13 14l1.8-6.5M13.6 7.5h2.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function More() {
+  return (
+    <svg {...base} fill="currentColor" stroke="none">
+      <circle cx="6" cy="12" r="1.6" />
+      <circle cx="12" cy="12" r="1.6" />
+      <circle cx="18" cy="12" r="1.6" />
     </svg>
   );
 }

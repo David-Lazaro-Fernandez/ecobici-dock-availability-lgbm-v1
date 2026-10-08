@@ -8,3 +8,5 @@ export function pct(p: number | null | undefined): string {
   if (p < IMPOSSIBLE_BELOW) return '< 1 %';
   return `${Math.round(p * 100)} %`;
 }
+
+export const FREE_LEGEND = ['< 50 %', '50–80 %', '80–95 %', '≥ 95 %'];
