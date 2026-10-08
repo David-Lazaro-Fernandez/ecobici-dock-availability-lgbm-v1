@@ -23,11 +23,10 @@ from ecobici import config, live
 from ecobici.collector.report import fetched_at
 from ecobici.devtools import stations as gbfs
 from ecobici.eval.baseline_report import HORIZONS
-from ecobici.eval.model_report import trip_flow
 from ecobici.ingest import captures as s3
-from ecobici.ingest import trips as trip_ingest
 from ecobici.recommender import geocode
 from ecobici.recommender import plan as rp
+from ecobici.serve import LiveService
 
 RAW = Path("raw")
 # One-hue ramp, light → dark. Each step has a contrast of 2:1 or more on the light map.
@@ -39,30 +38,20 @@ ORIGIN, DESTINATION = "#eb6834", "#0b0b0b"
 STATE = {"available": "Available", "full": "Full", "unavailable": "Unavailable", "stale": "Stale"}
 # Warn if the last capture is older.
 STALE_AFTER_MIN = 10
-RIDE_HISTORY = timedelta(days=365)
 S3_WINDOW = live.LOOKBACK + timedelta(minutes=5)
 DEFAULT_START = "Paseo de la Reforma 222, Juárez"
 
 st.set_page_config(page_title="Ecobici live predictions", layout="wide")
 
 
+# The page gets the captures itself (fetch_recent), so the service does not use S3.
 @st.cache_resource(show_spinner="Loading the frozen model…")
-def model() -> dict:
-    files = live.model_files()
-    return {
-        "frozen": live.load_frozen(),
-        "files": files,
-        "saturated": live.saturated_by_horizon(files),
-        "flow": trip_flow(trip_ingest.DEFAULT_DIR, RAW),
-    }
+def service() -> LiveService:
+    return LiveService(RAW, use_s3=False)
 
 
-@st.cache_resource(show_spinner="Computing ride times from recent trips…")
 def rides() -> pl.DataFrame:
-    since = datetime.now(config.LOCAL_TZ) - RIDE_HISTORY
-    return rp.ride_times(
-        trip_ingest.DEFAULT_DIR, trip_ingest.station_code_map(information()), since
-    )
+    return service().rides()
 
 
 @st.cache_data(ttl=1800, show_spinner="Fetching the weather forecast…")
@@ -75,14 +64,9 @@ def information() -> dict:
     return gbfs.latest_information(RAW) or gbfs.fetch_live(config.STATION_INFORMATION_URL)
 
 
-@st.cache_data(show_spinner="Predicting…", max_entries=4)
-def predictions(latest: str) -> pl.DataFrame:
-    """The cache key is the last capture name: a new capture gives a new prediction."""
-    m = model()
-    caps = live.recent_captures(RAW, fetched_at(Path(latest)))
-    return live.predict(
-        caps, information(), m["files"], m["flow"], weather(), m["saturated"], m["frozen"]
-    )
+def stations_now() -> pl.DataFrame:
+    """All stations at the last capture, with their predictions."""
+    return service().current().stations
 
 
 @st.cache_data(ttl=60, show_spinner="Fetching the latest captures from S3…")
@@ -204,9 +188,8 @@ age_min = (datetime.now(UTC) - at).total_seconds() / 60
 st.sidebar.caption(f"{len(captures):,} captures in `raw/`")
 
 # --- Predict -----------------------------------------------------------------
-pred = predictions(str(latest))
-snap = gbfs.snapshot_frame(information(), gbfs.read_capture(latest)).stations
-df = snap.join(pred.rename({"sid": "station_id"}).drop("t"), on="station_id", how="left")
+with st.spinner("Predicting…"):
+    df = stations_now()
 names = {r["station_id"]: station_label(r) for r in df.sort("short_name").to_dicts()}
 
 st.title("Will there be a free dock when I arrive?")
