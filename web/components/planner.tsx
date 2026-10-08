@@ -1,16 +1,19 @@
 'use client';
 
-// The trip planner, on the a-donde-ir recommender skeleton: stage, dock with one search bar, and a card with the
-// stations. The search bar edits one end of the trip at a time (From, then To).
+// The trip planner, on the a-donde-ir recommender skeleton: stage, dock with the search, and a card with the
+// stations. On a desktop, one search bar edits one end of the trip at a time (From, then To). On a phone, a form
+// has one input for each end.
 
 import dynamic from 'next/dynamic';
-import { type CSSProperties, type SyntheticEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { type CSSProperties, type ReactNode, type SyntheticEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { usePhone } from '@/lib/phone';
+import { Drawer, type DrawerOptions } from '@/components/drawer';
 import { type Candidate, type PlanResponse, type StationsResponse, useApi } from '@/lib/api';
 import { type PlacesFile, type Suggestion, bbox, buildIndex, cachedOnline, geocode, loadPlaces, merge, plain, searchPlaces } from '@/lib/places';
 import { Bike, Clock, Close, Dock, Locate, More, Pin, Send, Sliders, Walk } from '@/components/icons';
 import { type SortKey, sortCandidates } from '@/lib/sort';
 import { type Leg, useTripRoutes } from '@/lib/routes';
-import { FREE_LEGEND, pct } from '@/lib/format';
+import { FREE_LEGEND, pct, sharedNames, shortName } from '@/lib/format';
 import { FREE_STEPS } from '@/components/trip-map';
 import { RatePlan, TripCheck } from '@/components/feedback';
 import { Help } from '@/components/help';
@@ -31,6 +34,8 @@ const SUGGEST_LIMIT = 5;
 // The map area under the docked bar and the card (desktop). The camera frames the rest.
 const DOCK_OVERLAP = 170;
 const CARD_WIDTH = 420;
+// The phone trip bar and its margin, over the top of the map.
+const PHONE_TRIP_BAR_PX = 64;
 const TZ = 'America/Mexico_City';
 // In prod, the status shows only when the station data is old or missing.
 const DEV = process.env.NODE_ENV === 'development';
@@ -41,15 +46,8 @@ type Picked = { lat: number; lng: number; label: string; stationId?: string };
 
 const minutes = (m: number) => `${Math.max(1, Math.round(m))} min`;
 const meters = (m: number) => (m < 950 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(1)} km`);
-const shortName = (name: string) => name.replace(/^CE-\d+\s*/, '');
 // Some stations have the same name ("Liverpool - Génova" twice). Show the code only to tell those apart.
 const Code = ({ code, shown }: { code: string; shown: boolean }) => (shown ? <span className="code">{code}</span> : null);
-function sharedNames(stations: { name: string }[]) {
-  const seen = new Set<string>();
-  const shared = new Set<string>();
-  for (const { name } of stations) (seen.has(name) ? shared : seen).add(name);
-  return shared;
-}
 const whyNoBike = (s: { state: string }, t: Messages) =>
   s.state === 'unavailable' ? t.whyNoBike.unavailable : s.state === 'stale' ? t.whyNoBike.stale : t.whyNoBike.empty;
 // The ranking uses the arrival at the destination, so the row shows that time, not the arrival at the station.
@@ -61,30 +59,35 @@ const ROWS_FOLDED = 2;
 // Captures arrive every 2 min. Older data is not live.
 const OLD_AFTER_MIN = 10;
 
-const PHONE = '(max-width: 700px)';
-function usePhone() {
-  return useSyncExternalStore(
-    (notify) => {
-      const q = window.matchMedia(PHONE);
-      q.addEventListener('change', notify);
-      return () => q.removeEventListener('change', notify);
-    },
-    () => window.matchMedia(PHONE).matches,
-    () => false,
-  );
-}
-
-// The card fits above the dock. The dock height changes with the trip ends, the summary and the trip question.
-function useHeight<T extends HTMLElement>() {
+// The card fits above the dock, and the phone trip bar fits left of the language switch. Their sizes change with
+// the content and the language. The element must stay mounted.
+function useSize<T extends HTMLElement>() {
   const ref = useRef<T>(null);
-  const [height, setHeight] = useState(0);
+  const [size, setSize] = useState({ width: 0, height: 0 });
   useEffect(() => {
     if (!ref.current) return;
-    const observer = new ResizeObserver(([entry]) => setHeight(entry.borderBoxSize[0].blockSize));
+    const observer = new ResizeObserver(([entry]) =>
+      setSize({ width: entry.borderBoxSize[0].inlineSize, height: entry.borderBoxSize[0].blockSize }),
+    );
     observer.observe(ref.current);
     return () => observer.disconnect();
   }, []);
-  return [ref, height] as const;
+  return [ref, size] as const;
+}
+
+// The card on a desktop, the drawer on a phone, with the same content.
+function CardShell({ drawer, label, busy, children }: { drawer: false | DrawerOptions; label: string; busy: boolean; children: ReactNode }) {
+  if (drawer)
+    return (
+      <Drawer {...drawer} label={label} busy={busy}>
+        {children}
+      </Drawer>
+    );
+  return (
+    <aside className="card" aria-label={label} aria-busy={busy}>
+      {children}
+    </aside>
+  );
 }
 
 const SORTS: { key: SortKey; icon: () => React.JSX.Element }[] = [
@@ -165,7 +168,13 @@ function Row({ c, selected, bike, withCode, onSelect }: { c: Candidate; selected
 
 export function Planner() {
   const phone = usePhone();
-  const [dockRef, dockHeight] = useHeight<HTMLDivElement>();
+  const [dockRef, dockSize] = useSize<HTMLDivElement>();
+  const [cornerRef, cornerSize] = useSize<HTMLDivElement>();
+  // Phone only: the stations drawer and the screen to change the trip ends.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  // One closed height for each search: a later change (the selected row gets the bike line) must not move the map.
+  const [drawerPeek, setDrawerPeek] = useState({ searchKey: '', px: 0 });
+  const [planning, setPlanning] = useState(false);
   const lang = useLang();
   const t = useMessages();
   const clock = useMemo(() => clockFor(t.locale), [t.locale]);
@@ -189,6 +198,11 @@ export function Planner() {
   const [unfolded, setUnfolded] = useState('');
   const [tick, setTick] = useState(0);
   const located = start !== null;
+  // On a phone, the map shows only when the trip has both ends. Until then, or when the person taps the trip bar
+  // to change an end, the form stays in the middle.
+  const docked = phone ? Boolean(start && goal) && !planning : located;
+  const withDrawer = phone && docked;
+  const toInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!menu) return;
@@ -282,16 +296,39 @@ export function Planner() {
     setSuggestions([]);
     setNotice('');
     setCardOpen(true);
+    setPlanning(false);
+    setDrawerOpen(false);
     // After the start, the bar asks for the destination.
-    setEditing(end === 'from' && !goal ? 'to' : end);
+    const next = end === 'from' && !goal ? 'to' : end;
+    setEditing(next);
+    if (phone) {
+      if (next === 'to' && end === 'from') toInput.current?.focus();
+      else if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    }
+  }
+
+  // Back to the start screen, without a start or a destination.
+  function resetTrip() {
+    setStart(null);
+    setGoal(null);
+    setText('');
+    setTyping(false);
+    setSuggestions([]);
+    setNotice('');
+    setMenu(false);
+    setPlanning(false);
+    setDrawerOpen(false);
+    setPicked(null);
+    setUnfolded('');
+    setEditing('from');
   }
 
   function choose(s: Suggestion) {
     set(editing, { lat: s.lat, lng: s.lng, label: s.name, stationId: s.stationId });
   }
 
-  async function search(e: SyntheticEvent<HTMLFormElement>) {
-    e.preventDefault();
+  async function search(e?: SyntheticEvent<HTMLFormElement>) {
+    e?.preventDefault();
     if (suggestions[active]) return choose(suggestions[active]);
     if (!text.trim()) return;
     setBusy(true);
@@ -364,10 +401,80 @@ export function Planner() {
             : t.planner.summary(shortName(result.pickup.name), shortName(dropoff.name), pct(dropoff.p_free));
 
   const inset = {
-    top: 0,
-    bottom: located ? DOCK_OVERLAP : 0,
+    top: withDrawer ? PHONE_TRIP_BAR_PX : 0,
+    bottom: withDrawer ? (showCard ? drawerPeek.px : 0) : docked ? DOCK_OVERLAP : 0,
     left: showCard && !phone ? CARD_WIDTH + 24 : 0,
     right: 0,
+  };
+
+  const optionsButton = (
+    <button
+      type="button"
+      className={`ask__icon ${menu ? 'is-on' : ''}`}
+      aria-label={t.planner.optionsButton}
+      aria-expanded={menu}
+      onClick={() => {
+        // Close the phone keyboard, so the options stay in view.
+        if (!menu && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        setMenu((m) => !m);
+      }}
+    >
+      <Sliders />
+    </button>
+  );
+
+  // One row of the phone form. The row shows the picked place, and the typed text while it has the focus.
+  const endField = (end: End) => {
+    const picked = end === 'from' ? start : goal;
+    return (
+      <div className="trip-form__row">
+        <span className="trip-form__icon" aria-hidden="true">
+          {end === 'from' ? <span className="dot dot--start" /> : <Pin />}
+        </span>
+        <input
+          ref={end === 'to' ? toInput : undefined}
+          className="trip-form__input"
+          type="text"
+          enterKeyHint="search"
+          value={editing === end && typing ? text : (picked?.label ?? '')}
+          placeholder={end === 'from' ? t.planner.fromShort : t.planner.toShort}
+          aria-label={end === 'from' ? t.planner.fromLabel : t.planner.toLabel}
+          role="combobox"
+          aria-expanded={editing === end && suggestions.length > 0}
+          aria-controls="suggest"
+          aria-autocomplete="list"
+          autoComplete="off"
+          onFocus={(e) => {
+            setEditing(end);
+            e.currentTarget.select();
+          }}
+          onChange={(e) => {
+            setEditing(end);
+            setText(e.target.value);
+            setTyping(true);
+            setMenu(false);
+            setNotice('');
+          }}
+          onKeyDown={(e) => {
+            // A form with two inputs and no submit button does not submit on Enter.
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              search();
+            } else keys(e);
+          }}
+          onBlur={() => {
+            setSuggestions([]);
+            setTyping(false);
+            setText('');
+          }}
+        />
+        {end === 'from' && (
+          <button type="button" className="trip-form__locate" aria-label={t.planner.myLocation} title={t.planner.myLocation} onClick={locate} disabled={busy}>
+            <Locate />
+          </button>
+        )}
+      </div>
+    );
   };
 
   const menuBox = (
@@ -418,14 +525,23 @@ export function Planner() {
         <span className="topbar__brand">
           <img className="topbar__logo" src="/yes_mex.png" alt="" /> ¡Sí hay!
         </span>
-        <div className="topbar__end">
+        <div className="topbar__end" ref={cornerRef}>
           {status && <span className={`topbar__status ${live.error ? 'is-error' : old ? 'is-old' : ''}`}>{status}</span>}
           <LangSwitch />
           <Help />
         </div>
       </header>
 
-      <section className={`stage ${located ? 'is-located' : ''}`} style={{ '--card-width': `${CARD_WIDTH}px`, '--dock-height': `${dockHeight}px` } as CSSProperties}>
+      <section
+        className={`stage ${docked ? 'is-located' : ''}`}
+        style={
+          {
+            '--card-width': `${CARD_WIDTH}px`,
+            '--dock-height': `${dockSize.height}px`,
+            '--corner-width': `${cornerSize.width}px`,
+          } as CSSProperties
+        }
+      >
         <div className="stage__map">
           <TripMap
             center={CDMX}
@@ -446,10 +562,51 @@ export function Planner() {
         {/* Without a start, the veil covers the map and blocks its clicks. */}
         <div className="stage__glass" aria-hidden="true" />
 
-        {!located && <h1 className="stage__title">{t.planner.title}</h1>}
+        {!docked && <h1 className="stage__title">{t.planner.title}</h1>}
 
-        {showCard && (
-          <aside className="card" aria-label={t.planner.whereToDrop} aria-busy={plan.loading}>
+        {withDrawer && (
+          <button type="button" className="trip-reset" aria-label={t.planner.newSearch} title={t.planner.newSearch} onClick={resetTrip}>
+            <Close />
+          </button>
+        )}
+        {withDrawer && (
+          <button
+            type="button"
+            className="trip-bar"
+            aria-label={`${t.planner.editTrip}: ${goal!.label}`}
+            onClick={() => {
+              setMenu(false);
+              setPlanning(true);
+            }}
+          >
+            <span className="trip-form__icon" aria-hidden="true">
+              <Pin />
+            </span>
+            <span className="trip-bar__text">{goal!.label}</span>
+          </button>
+        )}
+        {phone && planning && start && goal && (
+          <button type="button" className="stage__back" aria-label={t.planner.backToMap} onClick={() => setPlanning(false)}>
+            <Close />
+          </button>
+        )}
+
+        {showCard && (!phone || docked) && (
+          <CardShell
+            label={t.planner.whereToDrop}
+            busy={plan.loading}
+            drawer={
+              withDrawer && {
+                open: drawerOpen,
+                onOpenChange: setDrawerOpen,
+                // The loading rows are shorter than the station rows: wait for the plan.
+                onPeekChange: (px) => result && setDrawerPeek((p) => (p.searchKey === searchKey ? p : { searchKey, px })),
+                peekTo: '.card__list > li',
+                openLabel: t.planner.openDrawer,
+                closeLabel: t.planner.closeDrawer,
+              }
+            }
+          >
             <div className="card__head">
               <div>
                 <strong>{t.planner.whereToDrop}</strong>
@@ -457,9 +614,11 @@ export function Planner() {
                   {result ? t.planner.stationsWithin(result.candidates.length, meters(result.radius_m)) : t.planner.computing}
                 </span>
               </div>
-              <button type="button" className="icon-btn" aria-label={t.planner.close} onClick={() => setCardOpen(false)}>
-                <Close />
-              </button>
+              {!withDrawer && (
+                <button type="button" className="icon-btn" aria-label={t.planner.close} onClick={() => setCardOpen(false)}>
+                  <Close />
+                </button>
+              )}
             </div>
             {!result ? (
               <ul className="card__list">
@@ -481,7 +640,7 @@ export function Planner() {
                         {shortName(result.requested.name)} {whyNoBike(result.requested, t)}.
                       </span>
                     )}
-                    {t.planner.takeBikeAt} <strong>{shortName(result.pickup.name)}</strong> <Code code={result.pickup.code} shown={shared.has(result.pickup.name)} />
+                    {t.planner.takeBikeAt} <strong>{shortName(result.pickup.name)}</strong> <Code code={result.pickup.code} shown={shared.has(shortName(result.pickup.name))} />
                     <span className="facts muted">
                       {result.pickup.walk_m > 0 && (
                         <Fact icon={Walk} label={t.planner.walkToStation}>
@@ -520,7 +679,7 @@ export function Planner() {
                       key={c.id}
                       c={c}
                       selected={c.id === dropoff?.id}
-                      withCode={shared.has(c.name)}
+                      withCode={shared.has(shortName(c.name))}
                       bike={c.id === dropoff?.id ? bikeText(legs) : ''}
                       onSelect={() => selectDropoff(c.id)}
                     />
@@ -545,7 +704,8 @@ export function Planner() {
                 {shown && <RatePlan key={planId} shown={shown} />}
               </>
             )}
-          </aside>
+            {withDrawer && <TripCheck currentPlanId={planId} />}
+          </CardShell>
         )}
 
         {phone && <div className={`menu__scrim ${menu ? 'is-open' : ''}`} aria-hidden="true" onClick={() => setMenu(false)} />}
@@ -553,8 +713,8 @@ export function Planner() {
         {phone && menuBox}
         <div className="dock" ref={dockRef}>
           {!phone && menuBox}
-          <TripCheck currentPlanId={planId} />
-          {located && (
+          {!(withDrawer && showCard) && <TripCheck currentPlanId={planId} />}
+          {located && !phone && (
             <div className="dock__ends" role="group" aria-label={t.planner.trip}>
               <button type="button" className={`end ${editing === 'from' ? 'is-on' : ''}`} onClick={() => setEditing('from')}>
                 <span className="dot dot--start" aria-hidden="true" />
@@ -574,8 +734,8 @@ export function Planner() {
               </button>
             </div>
           )}
-          {/* On a phone, the open card already shows the best drop-off. */}
-          {located && context && !(phone && showCard) && (
+          {/* On a phone, the form asks for the destination and the open card shows the best drop-off. */}
+          {docked && context && !(phone && showCard) && (
             <div className="dock__context">
               <span>{context}</span>
               {start && goal && result && !cardOpen && (
@@ -585,9 +745,10 @@ export function Planner() {
               )}
             </div>
           )}
-          <div className="ask-box">
+          {/* With the drawer, the trip bar at the top replaces the form. */}
+          <div className="ask-box" hidden={withDrawer}>
             {suggestions.length > 0 && (
-              <ul className={`suggest ${located ? '' : 'suggest--down'}`} role="listbox" id="suggest" aria-label={t.planner.suggestions}>
+              <ul className={`suggest ${docked ? '' : 'suggest--down'}`} role="listbox" id="suggest" aria-label={t.planner.suggestions}>
                 {suggestions.map((s, i) => (
                   <li key={`${s.lat},${s.lng},${s.name}`} role="option" aria-selected={i === active}>
                     <button
@@ -606,56 +767,54 @@ export function Planner() {
                 ))}
               </ul>
             )}
-            <form className="ask" onSubmit={search}>
-              <button
-                type="button"
-                className={`ask__icon ${menu ? 'is-on' : ''}`}
-                aria-label={t.planner.optionsButton}
-                aria-expanded={menu}
-                onClick={() => {
-                  // Close the phone keyboard, so the options stay in view.
-                  if (!menu && document.activeElement instanceof HTMLElement) document.activeElement.blur();
-                  setMenu((m) => !m);
-                }}
-              >
-                <Sliders />
-              </button>
-              <input
-                className="ask__input"
-                type="text"
-                value={text}
-                onChange={(e) => {
-                  setText(e.target.value);
-                  setTyping(true);
-                  setMenu(false);
-                  setNotice('');
-                }}
-                onKeyDown={keys}
-                onBlur={() => setSuggestions([])}
-                role="combobox"
-                aria-expanded={suggestions.length > 0}
-                aria-controls="suggest"
-                aria-autocomplete="list"
-                autoComplete="off"
-                aria-label={editing === 'from' ? t.planner.fromLabel : t.planner.toLabel}
-                placeholder={
-                  editing === 'from'
-                    ? located
-                      ? t.planner.changeStart
-                      : t.planner.askStart
-                    : t.planner.askGoalShort
-                }
-              />
-              {editing === 'from' && (
-                <button type="button" className="ask__locate" onClick={locate} disabled={busy}>
-                  <Locate />
-                  <span>{t.planner.myLocation}</span>
+            {phone ? (
+              <form className="trip-form" onSubmit={search} role="group" aria-label={t.planner.trip}>
+                <div className="trip-form__ends">
+                  {endField('from')}
+                  {endField('to')}
+                </div>
+                {optionsButton}
+              </form>
+            ) : (
+              <form className="ask" onSubmit={search}>
+                {optionsButton}
+                <input
+                  className="ask__input"
+                  type="text"
+                  value={text}
+                  onChange={(e) => {
+                    setText(e.target.value);
+                    setTyping(true);
+                    setMenu(false);
+                    setNotice('');
+                  }}
+                  onKeyDown={keys}
+                  onBlur={() => setSuggestions([])}
+                  role="combobox"
+                  aria-expanded={suggestions.length > 0}
+                  aria-controls="suggest"
+                  aria-autocomplete="list"
+                  autoComplete="off"
+                  aria-label={editing === 'from' ? t.planner.fromLabel : t.planner.toLabel}
+                  placeholder={
+                    editing === 'from'
+                      ? located
+                        ? t.planner.changeStart
+                        : t.planner.askStart
+                      : t.planner.askGoalShort
+                  }
+                />
+                {editing === 'from' && (
+                  <button type="button" className="ask__locate" onClick={locate} disabled={busy}>
+                    <Locate />
+                    <span>{t.planner.myLocation}</span>
+                  </button>
+                )}
+                <button type="submit" className="ask__send" aria-label={t.planner.search} disabled={busy || !text.trim()}>
+                  <Send />
                 </button>
-              )}
-              <button type="submit" className="ask__send" aria-label={t.planner.search} disabled={busy || !text.trim()}>
-                <Send />
-              </button>
-            </form>
+              </form>
+            )}
           </div>
           {notice && <p className="stage__hint">{notice}</p>}
         </div>

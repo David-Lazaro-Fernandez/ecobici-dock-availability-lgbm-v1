@@ -10,3 +10,17 @@ export function pct(p: number | null | undefined): string {
 }
 
 export const FREE_LEGEND = ['< 50 %', '50–80 %', '80–95 %', '≥ 95 %'];
+
+// The API name starts with the station code: "CE-017 Reforma - Río Tiber".
+export const shortName = (name: string) => name.replace(/^CE-\d+\s*/, '');
+
+/** The short names of two or more stations ("Liverpool - Génova" twice). Only those show the code. */
+export function sharedNames(stations: { name: string }[]) {
+  const seen = new Set<string>();
+  const shared = new Set<string>();
+  for (const { name } of stations) {
+    const short = shortName(name);
+    (seen.has(short) ? shared : seen).add(short);
+  }
+  return shared;
+}

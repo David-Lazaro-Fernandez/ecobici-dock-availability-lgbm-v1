@@ -39,6 +39,17 @@ test('the kind typed with the name finds the place of that kind only', () => {
 });
 test('a kind word alone does not match places without it in the name', () => assert.deepEqual(names('metro'), ['Metro Allende']));
 test('"ecobici" with a name finds the station', () => assert.equal(searchPlaces(index, 'ecobici reforma', near, 5)[0].stationId, '7'));
+test('merge keeps two stations with the same name, but drops that name from Photon', () => {
+  const local = [
+    { name: 'Liverpool - Génova', stationId: '12' },
+    { name: 'Liverpool - Génova', stationId: '13' },
+  ];
+  const online = [{ name: 'Liverpool - Génova' }, { name: 'Liverpool Insurgentes' }];
+  assert.deepEqual(
+    merge('liverpool', local, online, 5).map((s) => s.stationId ?? s.name),
+    ['12', '13', 'Liverpool Insurgentes'],
+  );
+});
 test('plain removes accents and punctuation', () => assert.equal(plain('Álvaro Obregón, CDMX!'), 'alvaro obregon cdmx'));
 test('merge puts local first, online first for a street number, and drops repeated names', () => {
   const local = [{ name: 'Reforma 222' }, { name: 'Roma' }];

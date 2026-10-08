@@ -101,11 +101,20 @@ export function searchPlaces(index: Place[], query: string, near: { lat: number;
   return out;
 }
 
-/** Local results first, unless the text has a number (a street address): then Photon first. No repeated names. */
+/** Local results first, unless the text has a number (a street address): then Photon first. No repeated names,
+ *  except Ecobici stations: two stations can have the same name, and each one is a different place. */
 export function merge(query: string, local: Suggestion[], online: Suggestion[], limit: number) {
   const ordered = /\d/.test(query) ? [...online, ...local] : [...local, ...online];
   const seen = new Set<string>();
-  return ordered.filter((s) => !seen.has(plain(s.name)) && seen.add(plain(s.name))).slice(0, limit);
+  const fresh = (s: Suggestion) => {
+    const name = plain(s.name);
+    const id = s.stationId && `station:${s.stationId}`;
+    if (id ? seen.has(id) : seen.has(name)) return false;
+    seen.add(name);
+    if (id) seen.add(id);
+    return true;
+  };
+  return ordered.filter(fresh).slice(0, limit);
 }
 
 /** Photon's bbox (minLon,minLat,maxLon,maxLat) around the stations. */
