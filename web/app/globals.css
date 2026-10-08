@@ -1451,8 +1451,11 @@ button.row.is-selected:hover {
     transition: none;
   }
 
-  /* The sort changes the full list only, so the closed drawer leaves it out and shows more map. */
-  .card.drawer:not(.is-open) .sort {
+  /* The closed drawer shows only the pickup and the best drop-off, so that the map stays in view. The sort, the
+     station count and the bike leg show when it opens. */
+  .card.drawer:not(.is-open) .sort,
+  .card.drawer:not(.is-open) .card__head .muted,
+  .card.drawer:not(.is-open) .row__route {
     display: none;
   }
 
