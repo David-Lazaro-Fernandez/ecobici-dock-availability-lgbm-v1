@@ -16,6 +16,8 @@ import { RatePlan, TripCheck } from '@/components/feedback';
 import { Help } from '@/components/help';
 import type { Shown } from '@/lib/feedback';
 import { saveTrip } from '@/lib/trip';
+import { type Messages, useLang, useMessages } from '@/lib/i18n';
+import { LangSwitch } from '@/components/lang-switch';
 
 const TripMap = dynamic(() => import('@/components/trip-map'), { ssr: false });
 
@@ -32,7 +34,7 @@ const CARD_WIDTH = 420;
 const TZ = 'America/Mexico_City';
 // In prod, the status shows only when the station data is old or missing.
 const DEV = process.env.NODE_ENV === 'development';
-const clock = new Intl.DateTimeFormat('es-MX', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: TZ });
+const clockFor = (locale: string) => new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: TZ });
 
 type End = 'from' | 'to';
 type Picked = { lat: number; lng: number; label: string; stationId?: string };
@@ -48,8 +50,8 @@ function sharedNames(stations: { name: string }[]) {
   for (const { name } of stations) (seen.has(name) ? shared : seen).add(name);
   return shared;
 }
-const whyNoBike = (s: { state: string }) =>
-  s.state === 'unavailable' ? 'está fuera de servicio' : s.state === 'stale' ? 'no envía datos recientes' : 'no tiene bicis ahora';
+const whyNoBike = (s: { state: string }, t: Messages) =>
+  s.state === 'unavailable' ? t.whyNoBike.unavailable : s.state === 'stale' ? t.whyNoBike.stale : t.whyNoBike.empty;
 // The ranking uses the arrival at the destination, so the row shows that time, not the arrival at the station.
 const atDestination = (c: Candidate) => new Date(new Date(c.arrive_at).getTime() + c.walk_min * 60_000);
 const band = (p: number | null) => (p == null ? 'none' : String(FREE_STEPS.filter((s) => p >= s).length));
@@ -72,10 +74,10 @@ function usePhone() {
   );
 }
 
-const SORTS: { key: SortKey; label: string; hint: string; icon: () => React.JSX.Element }[] = [
-  { key: 'time', label: 'Tiempo', hint: 'Ordenar por tiempo de viaje', icon: Clock },
-  { key: 'walk', label: 'Caminar', hint: 'Ordenar por distancia a pie al destino', icon: Walk },
-  { key: 'free', label: 'Disponibilidad', hint: 'Ordenar por probabilidad de lugar libre', icon: Dock },
+const SORTS: { key: SortKey; icon: () => React.JSX.Element }[] = [
+  { key: 'time', icon: Clock },
+  { key: 'walk', icon: Walk },
+  { key: 'free', icon: Dock },
 ];
 
 // The icon tells the kind of value. The label is for the tooltip and for screen readers.
@@ -98,6 +100,7 @@ function bikeText(legs: Leg[]) {
 }
 
 function Row({ c, selected, bike, withCode, onSelect }: { c: Candidate; selected: boolean; bike: string; withCode: boolean; onSelect: () => void }) {
+  const t = useMessages();
   if (!c.recommendable)
     return (
       <li className="row is-muted">
@@ -106,7 +109,7 @@ function Row({ c, selected, bike, withCode, onSelect }: { c: Candidate; selected
           <strong>
             {shortName(c.name)} <Code code={c.code} shown={withCode} />
           </strong>
-          <span className="muted">{c.state === 'stale' ? 'Sin datos recientes' : 'Fuera de servicio'}</span>
+          <span className="muted">{c.state === 'stale' ? t.stationState.stale : t.stationState.unavailable}</span>
         </span>
       </li>
     );
@@ -117,22 +120,22 @@ function Row({ c, selected, bike, withCode, onSelect }: { c: Candidate; selected
         <span className="row__body">
           <strong>
             {shortName(c.name)} <Code code={c.code} shown={withCode} />
-            {c.rank === 1 && <span className="row__tag">Mejor</span>}
+            {c.rank === 1 && <span className="row__tag">{t.planner.best}</span>}
           </strong>
           <span className="facts muted">
-            <Fact icon={Clock} label="Llegas a tu destino">
-              {clock.format(atDestination(c))}
+            <Fact icon={Clock} label={t.planner.arriveAtGoal}>
+              {clockFor(t.locale).format(atDestination(c))}
             </Fact>
-            <Fact icon={Walk} label="A pie hasta tu destino">
+            <Fact icon={Walk} label={t.planner.walkToGoal}>
               {meters(c.walk_m)}
             </Fact>
-            <Fact icon={Dock} label="Lugares libres ahora">
-              {c.docks ?? '—'} libres
+            <Fact icon={Dock} label={t.planner.docksNow}>
+              {t.planner.docksFree(String(c.docks ?? '—'))}
             </Fact>
           </span>
           {selected && bike && (
             <span className="facts row__route">
-              <Fact icon={Bike} label="En bici">
+              <Fact icon={Bike} label={t.planner.byBike}>
                 {bike}
               </Fact>
             </span>
@@ -149,6 +152,9 @@ function Row({ c, selected, bike, withCode, onSelect }: { c: Candidate; selected
 
 export function Planner() {
   const phone = usePhone();
+  const lang = useLang();
+  const t = useMessages();
+  const clock = useMemo(() => clockFor(t.locale), [t.locale]);
   const [start, setStart] = useState<Picked | null>(null);
   const [goal, setGoal] = useState<Picked | null>(null);
   const [editing, setEditing] = useState<End>('from');
@@ -189,7 +195,10 @@ export function Planner() {
   useEffect(() => {
     loadPlaces().then(setPlacesFile);
   }, []);
-  const index = useMemo(() => buildIndex(placesFile, stations), [placesFile, stations.length]);
+  const index = useMemo(
+    () => buildIndex(placesFile, stations, { station: t.places.station, kind: (k) => t.places.kinds[k] ?? k }),
+    [placesFile, stations.length, t],
+  );
   const near = start ?? CDMX;
 
   const planParams = useMemo(() => {
@@ -238,18 +247,18 @@ export function Planner() {
     setActive(0);
     if (plain(text).length < ONLINE_MIN_CHARS) return;
     const ctrl = new AbortController();
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       geocode(text, near, box, SUGGEST_LIMIT, ctrl.signal)
         .then((online) => setSuggestions(merge(text, local, online, SUGGEST_LIMIT)))
         .catch(() => {
-          if (!ctrl.signal.aborted) setNotice('La búsqueda de direcciones no responde. Los lugares conocidos sí funcionan.');
+          if (!ctrl.signal.aborted) setNotice(t.planner.searchDown);
         });
     }, SUGGEST_WAIT_MS);
     return () => {
-      clearTimeout(t);
+      clearTimeout(timer);
       ctrl.abort();
     };
-  }, [text, typing, index, box, near.lat, near.lng]);
+  }, [text, typing, index, box, near.lat, near.lng, t]);
 
   function set(end: End, p: Picked | null) {
     if (end === 'from') setStart(p);
@@ -275,25 +284,25 @@ export function Planner() {
     try {
       const [first] = await geocode(text, near, box, 1);
       if (first) choose(first);
-      else setNotice('No hay resultados en la zona de Ecobici. Agrega la colonia.');
+      else setNotice(t.planner.noResults);
     } catch {
-      setNotice('La búsqueda de direcciones no responde. Los lugares conocidos sí funcionan.');
+      setNotice(t.planner.searchDown);
     } finally {
       setBusy(false);
     }
   }
 
   function locate() {
-    if (!navigator.geolocation) return setNotice('Este navegador no comparte la ubicación.');
+    if (!navigator.geolocation) return setNotice(t.planner.noGeolocation);
     setBusy(true);
     navigator.geolocation.getCurrentPosition(
       (p) => {
         setBusy(false);
-        set('from', { lat: p.coords.latitude, lng: p.coords.longitude, label: 'Mi ubicación' });
+        set('from', { lat: p.coords.latitude, lng: p.coords.longitude, label: t.planner.myLocation });
       },
       () => {
         setBusy(false);
-        setNotice('La ubicación está bloqueada o no está disponible. Escribe una dirección.');
+        setNotice(t.planner.geolocationBlocked);
       },
       { enableHighAccuracy: true, timeout: 10_000 },
     );
@@ -319,26 +328,26 @@ export function Planner() {
   const ageMin = captured ? (Date.now() - captured.getTime()) / 60_000 : null;
   const old = ageMin != null && ageMin > OLD_AFTER_MIN;
   const status = live.error
-    ? live.error
+    ? t.apiProblem[live.error]
     : captured
       ? old
-        ? `Sin datos recientes · última lectura a las ${clock.format(captured)} (hace ${Math.round(ageMin!)} min)`
+        ? t.planner.oldData(clock.format(captured), Math.round(ageMin!))
         : DEV
-          ? `En vivo · estaciones leídas a las ${clock.format(captured)}`
+          ? t.planner.liveData(clock.format(captured))
           : ''
-      : 'Cargando estaciones…';
+      : t.planner.loadingStations;
 
   const context = !start
     ? ''
     : !goal
-      ? 'Ahora, ¿a dónde vas? Escríbelo o haz doble clic en el mapa.'
+      ? t.planner.askGoal
       : plan.error
-        ? plan.error
+        ? t.apiProblem[plan.error]
         : !result
-          ? 'Calculando…'
+          ? t.planner.computing
           : !dropoff
-            ? 'Ahora no se puede recomendar ninguna estación cerca del destino.'
-            : `Toma la bici en ${shortName(result.pickup.name)} y déjala en ${shortName(dropoff.name)}: ${pct(dropoff.p_free)} de encontrar lugar`;
+            ? t.planner.noDropoff
+            : t.planner.summary(shortName(result.pickup.name), shortName(dropoff.name), pct(dropoff.p_free));
 
   const inset = {
     top: 0,
@@ -351,22 +360,22 @@ export function Planner() {
     <div
       className={`menu ${phone ? 'menu--sheet' : ''} ${menu ? 'is-open' : ''}`}
       role={phone ? 'dialog' : undefined}
-      aria-label={phone ? 'Opciones' : undefined}
+      aria-label={phone ? t.planner.options : undefined}
       aria-hidden={!menu}
     >
       {phone && (
         <div className="menu__head">
-          <strong>Opciones</strong>
-          <button type="button" className="menu__close" aria-label="Cerrar opciones" onClick={() => setMenu(false)}>
+          <strong>{t.planner.options}</strong>
+          <button type="button" className="menu__close" aria-label={t.planner.closeOptions} onClick={() => setMenu(false)}>
             <Close />
           </button>
         </div>
       )}
       <div className="menu__row">
         <span className="menu__label">
-          <Walk /> Máximo a pie hasta tu destino
+          <Walk /> {t.planner.maxWalkLabel}
         </span>
-        <div className="chips" role="radiogroup" aria-label="Máximo a pie">
+        <div className="chips" role="radiogroup" aria-label={t.planner.maxWalk}>
           {RADII.map((r) => (
             <button key={r} type="button" role="radio" aria-checked={radius === r} className={`chip ${radius === r ? 'is-on' : ''}`} onClick={() => setRadius(r)}>
               {meters(r)}
@@ -376,9 +385,9 @@ export function Planner() {
       </div>
       <div className="menu__row">
         <span className="menu__label">
-          <Dock /> Minutos perdidos si la estación está llena
+          <Dock /> {t.planner.lostMinutesLabel}
         </span>
-        <div className="chips" role="radiogroup" aria-label="Minutos perdidos">
+        <div className="chips" role="radiogroup" aria-label={t.planner.lostMinutes}>
           {FAILURE_COSTS.map((f) => (
             <button key={f} type="button" role="radio" aria-checked={failure === f} className={`chip ${failure === f ? 'is-on' : ''}`} onClick={() => setFailure(f)}>
               {f} min
@@ -397,6 +406,7 @@ export function Planner() {
         </span>
         <div className="topbar__end">
           {status && <span className={`topbar__status ${live.error ? 'is-error' : old ? 'is-old' : ''}`}>{status}</span>}
+          <LangSwitch />
           <Help />
         </div>
       </header>
@@ -415,24 +425,25 @@ export function Planner() {
             selectedId={dropoff?.id ?? null}
             onSelect={selectDropoff}
             inset={inset}
-            onPickGoal={(p) => set('to', { ...p, label: 'Punto en el mapa' })}
+            onPickGoal={(p) => set('to', { ...p, label: t.planner.mapPoint })}
+            lang={lang}
           />
         </div>
         {/* Without a start, the veil covers the map and blocks its clicks. */}
         <div className="stage__glass" aria-hidden="true" />
 
-        {!located && <h1 className="stage__title">¿A dónde vas en bici?</h1>}
+        {!located && <h1 className="stage__title">{t.planner.title}</h1>}
 
         {showCard && (
-          <aside className="card" aria-label="Dónde dejar la bici" aria-busy={plan.loading}>
+          <aside className="card" aria-label={t.planner.whereToDrop} aria-busy={plan.loading}>
             <div className="card__head">
               <div>
-                <strong>Dónde dejar la bici</strong>
+                <strong>{t.planner.whereToDrop}</strong>
                 <span className="muted">
-                  {result ? `${result.candidates.length} estaciones a ${meters(result.radius_m)} o menos de tu destino` : 'Calculando…'}
+                  {result ? t.planner.stationsWithin(result.candidates.length, meters(result.radius_m)) : t.planner.computing}
                 </span>
               </div>
-              <button type="button" className="icon-btn" aria-label="Cerrar" onClick={() => setCardOpen(false)}>
+              <button type="button" className="icon-btn" aria-label={t.planner.close} onClick={() => setCardOpen(false)}>
                 <Close />
               </button>
             </div>
@@ -453,39 +464,39 @@ export function Planner() {
                   <p>
                     {result.requested && (
                       <span className="card__warn">
-                        {shortName(result.requested.name)} {whyNoBike(result.requested)}.
+                        {shortName(result.requested.name)} {whyNoBike(result.requested, t)}.
                       </span>
                     )}
-                    Toma la bici en <strong>{shortName(result.pickup.name)}</strong> <Code code={result.pickup.code} shown={shared.has(result.pickup.name)} />
+                    {t.planner.takeBikeAt} <strong>{shortName(result.pickup.name)}</strong> <Code code={result.pickup.code} shown={shared.has(result.pickup.name)} />
                     <span className="facts muted">
                       {result.pickup.walk_m > 0 && (
-                        <Fact icon={Walk} label="A pie hasta la estación">
+                        <Fact icon={Walk} label={t.planner.walkToStation}>
                           {meters(result.pickup.walk_m)}
                         </Fact>
                       )}
-                      <Fact icon={Bike} label="Bicis ahora">
-                        {result.pickup.bikes ?? '—'} bicis
+                      <Fact icon={Bike} label={t.planner.bikesNow}>
+                        {t.planner.bikes(String(result.pickup.bikes ?? '—'))}
                       </Fact>
                     </span>
                     {(result.pickup.p_empty_at_arrival ?? 0) >= EMPTY_RISK_SHOWN && (
-                      <span className="muted">{pct(result.pickup.p_empty_at_arrival)} de que se acaben antes de que llegues</span>
+                      <span className="muted">{t.planner.emptyRisk(pct(result.pickup.p_empty_at_arrival))}</span>
                     )}
                   </p>
                 </div>
-                <div className="sort" role="radiogroup" aria-label="Ordenar estaciones">
-                  {SORTS.map(({ key, label, hint, icon: Icon }) => (
+                <div className="sort" role="radiogroup" aria-label={t.planner.sortStations}>
+                  {SORTS.map(({ key, icon: Icon }) => (
                     <button
                       key={key}
                       type="button"
                       role="radio"
                       aria-checked={sortBy === key}
-                      aria-label={hint}
-                      title={hint}
+                      aria-label={t.planner.sorts[key].hint}
+                      title={t.planner.sorts[key].hint}
                       className={`sort__btn ${sortBy === key ? 'is-on' : ''}`}
                       onClick={() => setSortBy(key)}
                     >
                       <Icon />
-                      <span>{label}</span>
+                      <span>{t.planner.sorts[key].label}</span>
                     </button>
                   ))}
                 </div>
@@ -504,11 +515,11 @@ export function Planner() {
                 {(folded > 0 || open) && result.candidates.length > ROWS_FOLDED && (
                   <button type="button" className="card__more" aria-expanded={open} onClick={() => setUnfolded(open ? '' : searchKey)}>
                     <More />
-                    {open ? 'Ver menos' : `Ver ${folded} más`}
+                    {open ? t.planner.showLess : t.planner.showMore(folded)}
                   </button>
                 )}
                 <div className="card__legend">
-                  <p className="card__legend-title">Probabilidad de lugar libre al llegar</p>
+                  <p className="card__legend-title">{t.planner.legendTitle}</p>
                   <div className="card__legend-items">
                     {FREE_LEGEND.map((l, i) => (
                       <span key={l}>
@@ -530,11 +541,11 @@ export function Planner() {
           {!phone && menuBox}
           <TripCheck currentPlanId={planId} />
           {located && (
-            <div className="dock__ends" role="group" aria-label="Viaje">
+            <div className="dock__ends" role="group" aria-label={t.planner.trip}>
               <button type="button" className={`end ${editing === 'from' ? 'is-on' : ''}`} onClick={() => setEditing('from')}>
                 <span className="dot dot--start" aria-hidden="true" />
                 <span className="end__text">
-                  <small>Desde</small>
+                  <small>{t.planner.from}</small>
                   {start!.label}
                 </span>
               </button>
@@ -543,8 +554,8 @@ export function Planner() {
                   <Pin />
                 </span>
                 <span className="end__text">
-                  <small>Hasta</small>
-                  {goal?.label ?? 'Elige un destino'}
+                  <small>{t.planner.to}</small>
+                  {goal?.label ?? t.planner.pickGoal}
                 </span>
               </button>
             </div>
@@ -554,14 +565,14 @@ export function Planner() {
               <span>{context}</span>
               {start && goal && result && !cardOpen && (
                 <button type="button" className="pill pill--sm" onClick={() => setCardOpen(true)}>
-                  Ver estaciones
+                  {t.planner.showStations}
                 </button>
               )}
             </div>
           )}
           <div className="ask-box">
             {suggestions.length > 0 && (
-              <ul className={`suggest ${located ? '' : 'suggest--down'}`} role="listbox" id="suggest" aria-label="Sugerencias">
+              <ul className={`suggest ${located ? '' : 'suggest--down'}`} role="listbox" id="suggest" aria-label={t.planner.suggestions}>
                 {suggestions.map((s, i) => (
                   <li key={`${s.lat},${s.lng},${s.name}`} role="option" aria-selected={i === active}>
                     <button
@@ -584,7 +595,7 @@ export function Planner() {
               <button
                 type="button"
                 className={`ask__icon ${menu ? 'is-on' : ''}`}
-                aria-label="Opciones: distancia a pie y minutos perdidos"
+                aria-label={t.planner.optionsButton}
                 aria-expanded={menu}
                 onClick={() => {
                   // Close the phone keyboard, so the options stay in view.
@@ -611,22 +622,22 @@ export function Planner() {
                 aria-controls="suggest"
                 aria-autocomplete="list"
                 autoComplete="off"
-                aria-label={editing === 'from' ? 'Desde dónde sales' : 'A dónde vas'}
+                aria-label={editing === 'from' ? t.planner.fromLabel : t.planner.toLabel}
                 placeholder={
                   editing === 'from'
                     ? located
-                      ? 'Cambia el punto de partida: calle, lugar o estación'
-                      : '¿Desde dónde sales? Calle, lugar o estación'
-                    : '¿A dónde vas? Calle, lugar o estación'
+                      ? t.planner.changeStart
+                      : t.planner.askStart
+                    : t.planner.askGoalShort
                 }
               />
               {editing === 'from' && (
                 <button type="button" className="ask__locate" onClick={locate} disabled={busy}>
                   <Locate />
-                  <span>Mi ubicación</span>
+                  <span>{t.planner.myLocation}</span>
                 </button>
               )}
-              <button type="submit" className="ask__send" aria-label="Buscar" disabled={busy || !text.trim()}>
+              <button type="submit" className="ask__send" aria-label={t.planner.search} disabled={busy || !text.trim()}>
                 <Send />
               </button>
             </form>

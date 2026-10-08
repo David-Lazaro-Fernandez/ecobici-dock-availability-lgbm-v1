@@ -9,6 +9,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import type { Candidate, Pickup, Station } from '@/lib/api';
 import type { Leg } from '@/lib/routes';
 import { pct } from '@/lib/format';
+import { type Lang, type Messages, MESSAGES } from '@/lib/i18n';
 
 export const BASEMAP_STYLE = 'https://tiles.openfreemap.org/styles/positron';
 // Positron layers recolored with the palette of the help illustrations. A layer that the style drops is skipped.
@@ -88,18 +89,29 @@ const point = (p: Point, properties: Record<string, unknown> = {}): GeoJSON.Feat
 const esc = (v: unknown) =>
   String(v ?? '—').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
-const STATE_TEXT: Record<string, string> = { available: 'Disponible', full: 'Llena', unavailable: 'Fuera de servicio', stale: 'Sin datos recientes' };
-
-function stationPopup(s: Station, c?: Candidate) {
+function stationPopup(s: Station, t: Messages, c?: Candidate) {
   const lines = [
     `<b>${esc(s.name)}</b>`,
-    `${esc(STATE_TEXT[s.state] ?? s.state)} · ${esc(s.docks)} lugares libres de ${esc(s.capacity)} · ${esc(s.bikes)} bicis`,
+    `${esc(t.stationState[s.state] ?? s.state)} · ${t.map.docksOf(esc(s.docks), esc(s.capacity), esc(s.bikes))}`,
   ];
-  if (c && c.p_free != null) lines.push(`Lugar libre al llegar: <b>${pct(c.p_free)}</b>`);
-  else if (s.p_full) lines.push(`Llena en 15 / 30 / 45 min: ${pct(s.p_full['15'])} / ${pct(s.p_full['30'])} / ${pct(s.p_full['45'])}`);
-  else lines.push('Sin pronóstico');
-  if (!c && s.p_empty?.['15'] != null) lines.push(`Sin bicis en 15 min: ${pct(s.p_empty['15'])}`);
+  if (c && c.p_free != null) lines.push(`${t.map.freeOnArrival}: <b>${pct(c.p_free)}</b>`);
+  else if (s.p_full) lines.push(`${t.map.fullIn}: ${pct(s.p_full['15'])} / ${pct(s.p_full['30'])} / ${pct(s.p_full['45'])}`);
+  else lines.push(t.map.noForecast);
+  if (!c && s.p_empty?.['15'] != null) lines.push(`${t.map.emptyIn15}: ${pct(s.p_empty['15'])}`);
   return lines.join('<br/>');
+}
+
+// The style labels places with `name_en` ("Mexico City"). Use the label in the interface language, then the local name.
+function labelField(lang: Lang): maplibregl.ExpressionSpecification {
+  return ['coalesce', ['get', `name:${lang}`], ['get', 'name']];
+}
+
+function relabel(m: maplibregl.Map, lang: Lang) {
+  for (const layer of m.getStyle().layers) {
+    if (layer.type !== 'symbol') continue;
+    const field = m.getLayoutProperty(layer.id, 'text-field');
+    if (JSON.stringify(field ?? '').includes('"name')) m.setLayoutProperty(layer.id, 'text-field', labelField(lang));
+  }
 }
 
 export default function TripMap({
@@ -115,6 +127,7 @@ export default function TripMap({
   onSelect,
   inset,
   onPickGoal,
+  lang,
 }: {
   center: Point;
   stations: Station[];
@@ -131,12 +144,16 @@ export default function TripMap({
   /** The map area under the dock and the card. The camera centres on the visible area. */
   inset: Inset;
   onPickGoal: (p: Point) => void;
+  lang: Lang;
 }) {
+  const t = MESSAGES[lang];
   const box = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const goalPin = useRef<maplibregl.Marker | null>(null);
+  const credit = useRef<maplibregl.AttributionControl | null>(null);
   const pickGoal = useRef(onPickGoal);
   const select = useRef(onSelect);
+  const langNow = useRef(lang);
   const lookup = useRef<{ stations: Map<string, Station>; candidates: Map<string, Candidate> }>({ stations: new Map(), candidates: new Map() });
   const [broken, setBroken] = useState(false);
   // The layers exist only after the style loads. An earlier draw waits here.
@@ -144,6 +161,7 @@ export default function TripMap({
   const pending = useRef<(() => void) | null>(null);
   pickGoal.current = onPickGoal;
   select.current = onSelect;
+  langNow.current = lang;
   lookup.current = {
     stations: new Map(stations.map((s) => [s.id, s])),
     candidates: new Map(candidates.map((c) => [c.id, c])),
@@ -189,12 +207,11 @@ export default function TripMap({
     }
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
     // OpenFreeMap and OpenStreetMap require a visible credit. The dock covers the bottom.
-    m.addControl(
-      new maplibregl.AttributionControl({ compact: true, customAttribution: 'Rutas: OSRM, FOSSGIS' }),
-      'top-left',
-    );
+    credit.current = new maplibregl.AttributionControl({ compact: true, customAttribution: t.map.routesCredit });
+    m.addControl(credit.current, 'top-left');
     m.on('load', () => {
       for (const [layer, property, cssVar] of BASEMAP_PAINT) if (m.getLayer(layer)) m.setPaintProperty(layer, property, v(cssVar));
+      relabel(m, langNow.current);
       for (const id of ['stations', 'radius', 'walk', 'bike', 'candidates', 'pickup', 'start']) m.addSource(id, { type: 'geojson', data: collection([]) });
       m.addLayer({
         id: 'stations',
@@ -257,7 +274,7 @@ export default function TripMap({
         const s = lookup.current.stations.get(id);
         const c = lookup.current.candidates.get(id);
         if (c?.recommendable) select.current(id);
-        if (s) popup.setLngLat([s.lng, s.lat]).setHTML(stationPopup(s, c)).addTo(m);
+        if (s) popup.setLngLat([s.lng, s.lat]).setHTML(stationPopup(s, MESSAGES[langNow.current], c)).addTo(m);
         return;
       }
       const time = e.originalEvent.timeStamp;
@@ -268,6 +285,7 @@ export default function TripMap({
     map.current = m;
     return () => {
       goalPin.current = null;
+      credit.current = null;
       m.remove();
       map.current = null;
       ready.current = false;
@@ -318,6 +336,15 @@ export default function TripMap({
   }, [stations, start, goal, pickup, candidates, radiusM, legs, selectedId]);
 
   useEffect(() => {
+    const m = map.current;
+    if (!m || !credit.current) return;
+    if (ready.current) relabel(m, lang);
+    m.removeControl(credit.current);
+    credit.current = new maplibregl.AttributionControl({ compact: true, customAttribution: t.map.routesCredit });
+    m.addControl(credit.current, 'top-left');
+  }, [lang]);
+
+  useEffect(() => {
     map.current?.setPadding(inset);
   }, [inset.top, inset.bottom, inset.left, inset.right]);
 
@@ -338,6 +365,6 @@ export default function TripMap({
     m.fitBounds(b, { padding, maxZoom: 15.5, duration: still ? 0 : 900, easing: easeOut() });
   }, [start?.lat, start?.lng, goal?.lat, goal?.lng]);
 
-  if (broken) return <p className="notice">Tu navegador no puede mostrar el mapa. El plan sigue funcionando.</p>;
-  return <div ref={box} className="stage__mapbox" role="application" aria-label="Mapa. Haz doble clic para elegir el destino." />;
+  if (broken) return <p className="notice">{t.map.broken}</p>;
+  return <div ref={box} className="stage__mapbox" role="application" aria-label={t.map.label} />;
 }

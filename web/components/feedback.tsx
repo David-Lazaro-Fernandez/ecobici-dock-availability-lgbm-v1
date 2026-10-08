@@ -6,19 +6,14 @@ import { useEffect, useRef, useState } from 'react';
 import { type Answer, type DockAnswer, type Reason, type Shown, type Trip, sendFeedback } from '@/lib/feedback';
 import { dueTrip, markAnswered } from '@/lib/trip';
 import { Close, ThumbDown, ThumbUp } from '@/components/icons';
+import { useMessages } from '@/lib/i18n';
 
 const CHECK_MS = 60_000;
 // In `next dev`, ask at once about the last plan, so the question can be checked without a ride.
 const DEV = process.env.NODE_ENV === 'development';
 const DEV_CHECK_MS = 2_000;
 const THANKS_MS = 4_000;
-const PRIVACY = 'Anónimo. Guardamos solo las estaciones y tu respuesta para mejorar el modelo.';
-const REASONS: { key: Reason; label: string }[] = [
-  { key: 'far', label: 'Me deja lejos' },
-  { key: 'wrong_time', label: 'El tiempo no cuadra' },
-  { key: 'wrong_data', label: 'Datos incorrectos' },
-  { key: 'other', label: 'Otra razón' },
-];
+const REASONS: Reason[] = ['far', 'wrong_time', 'wrong_data', 'other'];
 
 type Status = 'ask' | 'sending' | 'sent' | 'failed';
 
@@ -39,24 +34,25 @@ function useSend(shown: Shown | null) {
 
 /** Use a new `key` for each plan, so the question comes back. */
 export function RatePlan({ shown }: { shown: Shown }) {
+  const t = useMessages().feedback;
   const { status, send } = useSend(shown);
   const [down, setDown] = useState(false);
   const [other, setOther] = useState(false);
   const [comment, setComment] = useState('');
 
-  if (status === 'sent') return <p className="rate muted">Gracias.</p>;
+  if (status === 'sent') return <p className="rate muted">{t.thanks}</p>;
   return (
     <div className="rate">
       <div className="rate__ask">
-        <span>¿Te sirvió esta recomendación?</span>
-        <button type="button" className="icon-btn" aria-label="Sí" title="Sí" disabled={status === 'sending'} onClick={() => send({ kind: 'rating', useful: true })}>
+        <span>{t.useful}</span>
+        <button type="button" className="icon-btn" aria-label={t.yes} title={t.yes} disabled={status === 'sending'} onClick={() => send({ kind: 'rating', useful: true })}>
           <ThumbUp />
         </button>
         <button
           type="button"
           className={`icon-btn ${down ? 'is-on' : ''}`}
-          aria-label="No"
-          title="No"
+          aria-label={t.no}
+          title={t.no}
           aria-expanded={down}
           disabled={status === 'sending'}
           onClick={() => setDown(true)}
@@ -65,8 +61,8 @@ export function RatePlan({ shown }: { shown: Shown }) {
         </button>
       </div>
       {down && !other && (
-        <div className="chips" role="group" aria-label="¿Por qué no?">
-          {REASONS.map(({ key, label }) => (
+        <div className="chips" role="group" aria-label={t.whyNot}>
+          {REASONS.map((key) => (
             <button
               key={key}
               type="button"
@@ -74,7 +70,7 @@ export function RatePlan({ shown }: { shown: Shown }) {
               disabled={status === 'sending'}
               onClick={() => (key === 'other' ? setOther(true) : send({ kind: 'rating', useful: false, reason: key }))}
             >
-              {label}
+              {t.reasons[key]}
             </button>
           ))}
         </div>
@@ -92,16 +88,16 @@ export function RatePlan({ shown }: { shown: Shown }) {
             value={comment}
             maxLength={280}
             onChange={(e) => setComment(e.target.value)}
-            placeholder="¿Qué falló? Sin datos personales, por favor."
-            aria-label="Qué falló"
+            placeholder={t.whatFailedHint}
+            aria-label={t.whatFailed}
           />
           <button type="submit" className="pill pill--sm" disabled={status === 'sending'}>
-            Enviar
+            {t.send}
           </button>
         </form>
       )}
-      {status === 'failed' && <p className="rate__error">No se pudo enviar. Intenta de nuevo.</p>}
-      <p className="rate__privacy muted">{PRIVACY}</p>
+      {status === 'failed' && <p className="rate__error">{t.sendFailed}</p>}
+      <p className="rate__privacy muted">{t.privacy}</p>
     </div>
   );
 }
@@ -136,6 +132,7 @@ export function TripCheck({ currentPlanId }: { currentPlanId: string }) {
 const tripKey = (t: Trip) => `${t.shown.plan_id}|${t.shown.dropoff_id}`;
 
 function TripQuestion({ trip, onDone }: { trip: Trip; onDone: () => void }) {
+  const t = useMessages().feedback;
   const [dock, setDock] = useState<DockAnswer | null>(null);
   const { status, send } = useSend(trip.shown);
 
@@ -152,34 +149,30 @@ function TripQuestion({ trip, onDone }: { trip: Trip; onDone: () => void }) {
   const answerDock = (a: DockAnswer) => (a === 'no_trip' ? send({ kind: 'trip', found_dock: a }, markAnswered) : setDock(a));
 
   return (
-    <aside className="trip-check" aria-label="Tu último viaje">
-      <button type="button" className="icon-btn trip-check__close" aria-label="No preguntar" onClick={close}>
+    <aside className="trip-check" aria-label={t.lastTrip}>
+      <button type="button" className="icon-btn trip-check__close" aria-label={t.dontAsk} onClick={close}>
         <Close />
       </button>
       {status === 'sent' ? (
-        <p>Gracias. Tu respuesta nos ayuda a mejorar las predicciones.</p>
+        <p>{t.tripThanks}</p>
       ) : dock === null ? (
         <>
-          <p>
-            ¿Encontraste lugar para dejar la bici en <strong>{trip.dropoffName}</strong>?
-          </p>
+          <p>{t.foundDock(<strong>{trip.dropoffName}</strong>)}</p>
           <div className="chips">
             <button type="button" className="chip" disabled={status === 'sending'} onClick={() => answerDock('yes')}>
-              Sí
+              {t.yes}
             </button>
             <button type="button" className="chip" disabled={status === 'sending'} onClick={() => answerDock('no')}>
-              No
+              {t.no}
             </button>
             <button type="button" className="chip" disabled={status === 'sending'} onClick={() => answerDock('no_trip')}>
-              No hice el viaje
+              {t.noTrip}
             </button>
           </div>
         </>
       ) : (
         <>
-          <p>
-            ¿Había bici en <strong>{trip.pickupName}</strong> cuando llegaste?
-          </p>
+          <p>{t.foundBike(<strong>{trip.pickupName}</strong>)}</p>
           <div className="chips">
             {(['yes', 'no'] as const).map((bike) => (
               <button
@@ -189,14 +182,14 @@ function TripQuestion({ trip, onDone }: { trip: Trip; onDone: () => void }) {
                 disabled={status === 'sending'}
                 onClick={() => send({ kind: 'trip', found_dock: dock, found_bike: bike }, markAnswered)}
               >
-                {bike === 'yes' ? 'Sí' : 'No'}
+                {bike === 'yes' ? t.yes : t.no}
               </button>
             ))}
           </div>
         </>
       )}
-      {status === 'failed' && <p className="rate__error">No se pudo enviar. Intenta de nuevo.</p>}
-      {status !== 'sent' && <p className="rate__privacy muted">{PRIVACY}</p>}
+      {status === 'failed' && <p className="rate__error">{t.sendFailed}</p>}
+      {status !== 'sent' && <p className="rate__privacy muted">{t.privacy}</p>}
     </aside>
   );
 }

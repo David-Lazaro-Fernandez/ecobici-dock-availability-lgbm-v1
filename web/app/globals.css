@@ -143,6 +143,45 @@ input:focus-visible {
   height: 22px;
 }
 
+/* Language switch: two pills with a flag and the language code. */
+
+.lang {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.lang__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.lang__btn:hover {
+  color: var(--ink);
+  background: var(--bg);
+}
+
+.lang__btn.is-on {
+  color: var(--ink);
+  background: var(--highlight-wash);
+}
+
+.flag {
+  width: 18px;
+  height: 12px;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px var(--ink-10);
+}
+
 /* Help: onboarding steps in a modal over an ink veil. Dark green, with white text and controls. */
 
 .help {
@@ -1149,6 +1188,10 @@ button.row.is-selected:hover {
   .topbar__end {
     flex: 1;
     justify-content: flex-end;
+  }
+
+  .lang__btn {
+    padding: 4px 6px;
   }
 
   .stage .maplibregl-ctrl-top-left,

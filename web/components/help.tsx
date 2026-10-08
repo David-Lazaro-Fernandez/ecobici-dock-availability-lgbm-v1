@@ -6,6 +6,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { FREE_LEGEND } from '@/lib/format';
 import { Close, Help as HelpIcon } from '@/components/icons';
 import { ChanceArt, GoalArt, RecommendArt, StartArt } from '@/components/onboarding-art';
+import { useMessages } from '@/lib/i18n';
 
 const HIDDEN_KEY = 'ecobici-help-hidden-v1';
 
@@ -26,43 +27,11 @@ function saveHidden(hide: boolean) {
   }
 }
 
-const STEPS: { art: () => ReactNode; title: string; text: ReactNode }[] = [
-  {
-    art: StartArt,
-    title: 'Elige desde dónde sales',
-    text: (
-      <>
-        Escribe una calle, un lugar o una estación, o toca <em>Mi ubicación</em>.
-      </>
-    ),
-  },
-  {
-    art: GoalArt,
-    title: 'Elige a dónde vas',
-    text: 'Escríbelo o haz doble clic en el mapa.',
-  },
-  {
-    art: RecommendArt,
-    title: 'Sigue la recomendación',
-    text: (
-      <>
-        Te decimos dónde tomar la bici y en qué estación dejarla. La <strong>#1</strong> es la mejor; toca otra para ver su
-        ruta.
-      </>
-    ),
-  },
-  {
-    art: ChanceArt,
-    title: 'Qué significa el porcentaje',
-    text: (
-      <>
-        La probabilidad de encontrar lugar libre <strong>a la hora en que llegas</strong>.
-      </>
-    ),
-  },
-];
+const ARTS: ((props: { label: string }) => ReactNode)[] = [StartArt, GoalArt, RecommendArt, ChanceArt];
 
 export function Help() {
+  const t = useMessages();
+  const steps = t.help.steps;
   const dialog = useRef<HTMLDialogElement>(null);
   const [dontShow, setDontShow] = useState(false);
   const [step, setStep] = useState(0);
@@ -72,8 +41,9 @@ export function Help() {
     dialog.current?.showModal();
   };
   const close = () => dialog.current?.close();
-  const last = step === STEPS.length - 1;
-  const { art: Art, title, text } = STEPS[step];
+  const last = step === steps.length - 1;
+  const Art = ARTS[step];
+  const { art, title, text } = steps[step];
 
   useEffect(() => {
     if (!hidden()) open();
@@ -81,7 +51,7 @@ export function Help() {
 
   return (
     <>
-      <button type="button" className="icon-btn topbar__help" aria-label="Cómo usar la app" title="Cómo usar la app" onClick={open}>
+      <button type="button" className="icon-btn topbar__help" aria-label={t.help.open} title={t.help.open} onClick={open}>
         <HelpIcon />
       </button>
       <dialog
@@ -96,12 +66,12 @@ export function Help() {
         <div className="help__body">
           <div className="help__head">
             <span className="help__brand">¡Sí hay!</span>
-            <button type="button" className="icon-btn" aria-label="Cerrar" onClick={close}>
+            <button type="button" className="icon-btn" aria-label={t.help.close} onClick={close}>
               <Close />
             </button>
           </div>
           <div className="help__step" aria-live="polite">
-            <Art />
+            <Art label={art} />
             <h2 id="help-title">{title}</h2>
             <p>{text}</p>
             {last && (
@@ -114,13 +84,13 @@ export function Help() {
               </div>
             )}
           </div>
-          <div className="help__dots" role="group" aria-label="Pasos">
-            {STEPS.map((s, i) => (
+          <div className="help__dots" role="group" aria-label={t.help.stepsLabel}>
+            {steps.map((s, i) => (
               <button
                 key={s.title}
                 type="button"
                 className={`help__dot ${i === step ? 'is-on' : ''}`}
-                aria-label={`Paso ${i + 1}: ${s.title}`}
+                aria-label={t.help.step(i + 1, s.title)}
                 aria-current={i === step ? 'step' : undefined}
                 onClick={() => setStep(i)}
               />
@@ -129,16 +99,16 @@ export function Help() {
           <div className="help__foot">
             <label className="help__dont-show">
               <input type="checkbox" checked={dontShow} onChange={(e) => setDontShow(e.target.checked)} />
-              No volver a mostrar
+              {t.help.dontShow}
             </label>
             <div className="help__nav">
               {step > 0 && (
                 <button type="button" className="help__back" onClick={() => setStep(step - 1)}>
-                  Atrás
+                  {t.help.back}
                 </button>
               )}
               <button type="button" className="help__ok" autoFocus onClick={() => (last ? close() : setStep(step + 1))}>
-                {last ? 'Empezar' : 'Siguiente'}
+                {last ? t.help.start : t.help.next}
               </button>
             </div>
           </div>

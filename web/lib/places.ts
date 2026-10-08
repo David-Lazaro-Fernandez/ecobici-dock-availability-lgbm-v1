@@ -45,14 +45,18 @@ export function loadPlaces() {
   return placesFile;
 }
 
-export function buildIndex(file: PlacesFile | null, stations: Station[]): Place[] {
+export type IndexLabels = { station: (code: string) => string; kind: (kind: string) => string };
+const SPANISH_LABELS: IndexLabels = { station: (code) => `Estación Ecobici ${code}`, kind: (kind) => kind };
+
+/** `labels` sets the context line of each place. The kinds in lugares.json are in Spanish. */
+export function buildIndex(file: PlacesFile | null, stations: Station[], labels: IndexLabels = SPANISH_LABELS): Place[] {
   const out: Place[] = stations.map((s) =>
     makePlace(
-      { lat: s.lat, lng: s.lng, name: s.name.replace(/^CE-\d+\s*/, ''), context: `Estación Ecobici ${s.code}`, stationId: s.id },
+      { lat: s.lat, lng: s.lng, name: s.name.replace(/^CE-\d+\s*/, ''), context: labels.station(s.code), stationId: s.id },
       STATION_RANK,
     ),
   );
-  for (const [name, kind, lat, lng] of file?.places ?? []) out.push(makePlace({ lat, lng, name, context: file!.kinds[kind] }, kind));
+  for (const [name, kind, lat, lng] of file?.places ?? []) out.push(makePlace({ lat, lng, name, context: labels.kind(file!.kinds[kind]) }, kind));
   return out;
 }
 

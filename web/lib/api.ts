@@ -2,6 +2,7 @@
 // address at build time. CACHE_MS is 1 min because captures arrive every 2 min.
 
 import { useEffect, useState } from 'react';
+import type { ApiProblem } from '@/lib/i18n';
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 const WAIT_MS = 250;
@@ -73,11 +74,11 @@ export type PlanResponse = {
 
 const cache = new Map<string, { at: number; data: unknown }>();
 
-function problem(status: number, detail: unknown) {
-  if (status === 503) return 'Todavía no hay datos en vivo. Intenta en un minuto.';
-  if (status === 422 && detail === 'no station with a bike near the start') return 'No hay estaciones con bicis cerca del punto de partida.';
-  if (status === 422) return 'No se pudo calcular el viaje con esos datos.';
-  return 'El servicio de predicción no responde. ¿Está corriendo la API?';
+function problem(status: number, detail: unknown): ApiProblem {
+  if (status === 503) return 'no_live_data';
+  if (status === 422 && detail === 'no station with a bike near the start') return 'no_bike_near_start';
+  if (status === 422) return 'bad_request';
+  return 'api_down';
 }
 
 function cached(url: string) {
@@ -100,23 +101,23 @@ async function load(url: string, signal: AbortSignal) {
 }
 
 /** Query `path` with `params`. If `params` is null, clear the state. A new `refresh` value skips the cache. While
- *  loading, `data` keeps the previous answer. */
+ *  loading, `data` keeps the previous answer. `error` is a key of the `apiProblem` messages. */
 export function useApi<T>(path: string, params: URLSearchParams | null, refresh: unknown = null, wait = WAIT_MS) {
   const query = params ? String(params) : '';
   const url = params ? `${API_URL}${path}${query ? `?${query}` : ''}` : null;
-  const [state, setState] = useState<{ data: T | null; error: string; loading: boolean }>({
+  const [state, setState] = useState<{ data: T | null; error: ApiProblem | null; loading: boolean }>({
     data: null,
-    error: '',
+    error: null,
     loading: false,
   });
   useEffect(() => {
     if (!url) {
-      setState({ data: null, error: '', loading: false });
+      setState({ data: null, error: null, loading: false });
       return;
     }
     const hit = cached(url);
     if (hit !== undefined && refresh === null) {
-      setState({ data: hit as T, error: '', loading: false });
+      setState({ data: hit as T, error: null, loading: false });
       return;
     }
     if (refresh !== null) cache.delete(url);
@@ -124,9 +125,9 @@ export function useApi<T>(path: string, params: URLSearchParams | null, refresh:
     const ctrl = new AbortController();
     const timer = setTimeout(() => {
       load(url, ctrl.signal)
-        .then((data) => setState({ data: data as T, error: '', loading: false }))
+        .then((data) => setState({ data: data as T, error: null, loading: false }))
         .catch((e: Error) => {
-          if (!ctrl.signal.aborted) setState((s) => ({ ...s, error: e.message, loading: false }));
+          if (!ctrl.signal.aborted) setState((s) => ({ ...s, error: e.message as ApiProblem, loading: false }));
         });
     }, wait);
     return () => {

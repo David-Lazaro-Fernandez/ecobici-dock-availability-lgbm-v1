@@ -38,9 +38,9 @@ function StartDot({ x, y }: { x: number; y: number }) {
   );
 }
 
-export function StartArt() {
+export function StartArt({ label }: { label: string }) {
   return (
-    <svg {...frame} aria-label="Mapa con tu punto de partida">
+    <svg {...frame} aria-label={label}>
       <Glow />
       <MapCard />
       <StartDot x={118} y={92} />
@@ -52,9 +52,9 @@ export function StartArt() {
   );
 }
 
-export function GoalArt() {
+export function GoalArt({ label }: { label: string }) {
   return (
-    <svg {...frame} aria-label="Ruta hasta tu destino">
+    <svg {...frame} aria-label={label}>
       <Glow />
       <MapCard />
       <circle cx="184" cy="80" r="32" fill={INK} opacity="0.06" stroke={INK} strokeOpacity="0.35" strokeDasharray="4 4" />
@@ -77,9 +77,9 @@ function Badge({ x, y, n, fill, text }: { x: number; y: number; n: number; fill:
   );
 }
 
-export function RecommendArt() {
+export function RecommendArt({ label }: { label: string }) {
   return (
-    <svg {...frame} aria-label="Bici y estación recomendada">
+    <svg {...frame} aria-label={label}>
       <Glow />
       <ellipse cx="140" cy="160" rx="118" ry="9" fill={PAPER} opacity="0.12" />
       <rect x="186" y="74" width="16" height="86" rx="4" fill={MAP} />
@@ -101,10 +101,10 @@ export function RecommendArt() {
   );
 }
 
-export function ChanceArt() {
+export function ChanceArt({ label }: { label: string }) {
   const ramp = [LIGHT_GREEN, GREEN, DARK_GREEN, DEEP_GREEN];
   return (
-    <svg {...frame} aria-label="Probabilidad de lugar libre">
+    <svg {...frame} aria-label={label}>
       <Glow />
       <rect x="66" y="34" width="148" height="76" rx="16" fill={PAPER} />
       <path d="M126 110h28l-14 14Z" fill={PAPER} />
