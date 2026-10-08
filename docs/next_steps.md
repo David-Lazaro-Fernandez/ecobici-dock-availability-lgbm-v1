@@ -70,6 +70,15 @@ El horizonte es cuánto tiempo hacia adelante predice el modelo: del momento en 
   - `ecobici-capture-report` ahora mide la cobertura de cada mañana entre semana (07:00–11:00). El 7 de octubre: 120 de 120.
   - Las lecturas `stale` caen sobre todo de 02:00 a 05:00 (estaciones quietas). De día se conserva casi todo.
 
+### Paquete de servicio (2026-10-07)
+
+- La API cargaba el histórico completo en cada predicción y usaba **7.3 GB** de RAM. Ahora lee un paquete precalculado (`ecobici.bundle`, `artifacts/serving/`, ~2.8 MB): lista de estaciones, perfiles por objetivo, estaciones saturadas, flujos de viajes y tiempos por par.
+- **Mismas predicciones:** sobre la misma captura, la diferencia es 0.0 en todas las probabilidades (llena 15/30/45 y vacía 15).
+- **Memoria medida:** ~620 MB al arrancar y ~710 MB tras cinco capturas, con crecimiento cada vez menor (+46, +20, +12, +8 MB). Arranca en 5 s; cada plan responde en ~30 ms.
+- **Construirlo** después de un modelo nuevo, un mes nuevo de viajes o un cambio de estaciones: `uv run --extra api python -m ecobici.bundle` (~15 s; usa ~12 GB, así que se hace en la laptop y se sube el resultado).
+- **Instancia:** 2 GB alcanzan para la API sola; 4 GB dan margen para API + OSRM. La t3.micro de 1 GB queda para el collector.
+- **Tiempos de bici:** la velocidad real es 11.4 km/h de mediana (130 mil pares de estaciones), así que los 12 km/h supuestos están bien. Un par con un tiempo histórico muy rápido (259 → 068, 18 km/h) puede ganar a una estación más cercana al destino. El OSRM propio servirá para contrastarlo.
+
 ### Probado y descartado
 
 - **Rezagos con ventana centrada** (2026-10-07). Recupera casi todos los rezagos (de ~47 % a ~95 %), pero en VAL_REPORT el BSS cambia ≤ 0.003 y la calibración no cambia. El modelo congelado sigue con `trailing`. Ver [M6](reports/M6_lgbm.md#experimento-rezagos-con-ventana-centrada-2026-10-07).
