@@ -9,7 +9,8 @@
     "prebuild": "node scripts/copy-worker.mjs",
     "build": "next build",
     "start": "next start",
-    "test": "node --experimental-strip-types --test 'lib/*.test.mjs'"
+    "test": "node --experimental-strip-types --test 'lib/*.test.mjs'",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "maplibre-gl": "^6.13.0",
@@ -18,6 +19,7 @@
     "react-dom": "19.2.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.0",
     "@types/node": "^22.10.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",

@@ -1,7 +1,13 @@
 // npm test
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { pct } from './format.ts';
+import { pct, sharedNames, shortName } from './format.ts';
+
+test('shortName drops the station code', () => assert.equal(shortName('CE-017 Reforma - Río Tiber'), 'Reforma - Río Tiber'));
+test('sharedNames compares the names without the code', () => {
+  const stations = [{ name: 'CE-112 Liverpool - Génova' }, { name: 'CE-113 Liverpool - Génova' }, { name: 'CE-114 Durango-Monterrey' }];
+  assert.deepEqual([...sharedNames(stations)], ['Liverpool - Génova']);
+});
 
 test('pct never shows certainty', () => {
   assert.equal(pct(0.9994), '> 99 %');

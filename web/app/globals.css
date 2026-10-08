@@ -475,8 +475,9 @@ input:focus-visible {
   height: 16px;
 }
 
-/* The pin is a marker over the map: it must not take the clicks for the stations under it. */
-.goal-pin {
+/* The pins of the destination and the pickup are markers over the map: they must not take the clicks for the
+   stations under them. */
+.map-pin {
   pointer-events: none;
   filter: drop-shadow(0 1px 2px rgba(11, 11, 11, 0.35));
 }
@@ -607,6 +608,159 @@ input:focus-visible {
   cursor: default;
 }
 
+/* Phone trip form: From over To, joined by a dotted line, with the options button on the right. */
+
+.trip-form {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px 2px 14px;
+  background: var(--paper);
+  border: 1.5px solid var(--ink);
+  border-radius: 16px;
+}
+
+.trip-form:focus-within {
+  border-color: var(--primary);
+  outline: 3px solid var(--highlight-wash);
+}
+
+.trip-form__ends {
+  flex: 1;
+  min-width: 0;
+}
+
+.trip-form__row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 50px;
+}
+
+/* From the dot of the first row down to the pin of the second row. Each dot takes a fifth of the line, so the line
+   always has 5 dots. */
+.trip-form__row:first-child::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: calc(50% + 9px);
+  width: 4px;
+  height: calc(100% - 18px);
+  background: radial-gradient(circle, var(--muted) 1.5px, transparent 2px) 0 0 / 4px 20% repeat-y;
+}
+
+.trip-form__row + .trip-form__row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 28px;
+  right: 0;
+  border-top: 1px solid var(--line);
+}
+
+.trip-form__icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  color: var(--ink);
+}
+
+.trip-form__icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* 16px or more: iOS zooms into a smaller input when it gets the focus. */
+.trip-form__input {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 16px;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  outline: none;
+}
+
+.trip-form__input:focus-visible {
+  outline: none;
+}
+
+.trip-form__input::placeholder {
+  color: var(--muted);
+}
+
+.trip-form__locate {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  color: var(--muted);
+}
+
+.trip-form__locate:hover {
+  color: var(--ink);
+  background: var(--highlight-wash);
+}
+
+.trip-form__locate svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* Phone trip bar: the destination at the top, left of the language switch. A tap opens the trip form again. */
+
+.trip-bar,
+.trip-reset,
+.stage__back {
+  position: absolute;
+  z-index: 3;
+  top: 12px;
+  left: 12px;
+  height: 40px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+/* Right of the new search button, which is 40px wide. */
+.trip-bar {
+  left: 60px;
+  right: calc(12px + var(--corner-width) + 8px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  font-size: 0.95rem;
+  text-align: left;
+}
+
+.trip-bar__text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.trip-reset,
+.stage__back {
+  display: grid;
+  place-items: center;
+  width: 40px;
+}
+
+.trip-reset svg,
+.stage__back svg {
+  width: 18px;
+  height: 18px;
+}
+
 /* Suggestions open down with the bar in the middle and up with the bar at the foot. */
 
 .suggest {
@@ -623,9 +777,12 @@ input:focus-visible {
   border-radius: 8px;
 }
 
+/* The bar sits a little under the middle, so about half the screen minus 100px is free below it. */
 .suggest--down {
   top: calc(100% + 8px);
   bottom: auto;
+  max-height: calc(50svh - 100px);
+  overflow-y: auto;
 }
 
 .suggest__item {
@@ -753,9 +910,10 @@ input:focus-visible {
   top: calc(var(--bar) + 52px);
   left: 24px;
   width: min(var(--card-width), calc(100% - 48px));
-  max-height: calc(100% - var(--bar) - 52px - 230px);
+  max-height: calc(100% - var(--bar) - 52px - var(--dock-height) - 40px);
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
   background: var(--paper);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -959,9 +1117,15 @@ button.row.is-selected:hover {
 
 .card__list {
   list-style: none;
+  min-height: 96px;
   margin: 0;
   padding: 0 16px;
   overflow-y: auto;
+}
+
+/* Only the list shrinks. If the other parts do not fit, the card scrolls. */
+.card > :not(.card__list) {
+  flex-shrink: 0;
 }
 
 .card__list > li {
@@ -1174,36 +1338,171 @@ button.row.is-selected:hover {
   right: 8px;
 }
 
-/* Phone: the map runs under the top bar, the card takes the width, the locate button keeps only its icon, and the
-   options menu is a sheet from the foot over an ink veil. */
+/* Phone: no top bar. The language switch and the help float at the top right, and the map takes the full height.
+   The card takes the width, the locate button keeps only its icon, and the options menu is a sheet from the foot
+   over an ink veil. */
 @media (max-width: 700px) {
+  :root {
+    --bar: 0px;
+  }
+
   .topbar {
-    padding: 0 16px;
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    left: auto;
+    height: auto;
+    padding: 0;
+    background: none;
+    border: 0;
   }
 
+  .topbar__brand,
   .topbar__status {
-    max-width: 55%;
+    display: none;
   }
 
+  /* Same height as the trip bar on its left. */
   .topbar__end {
-    flex: 1;
-    justify-content: flex-end;
+    height: 40px;
+    gap: 2px;
+    padding: 2px 4px;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+  }
+
+  .topbar__end .lang {
+    border: 0;
   }
 
   .lang__btn {
     padding: 4px 6px;
   }
 
-  .stage .maplibregl-ctrl-top-left,
-  .stage .maplibregl-ctrl-top-right {
+  /* Flags only. */
+  .lang__code {
+    display: none;
+  }
+
+  /* The help shows only over the map: a white circle under the map credit "i", with the same size. The credit is
+     24px high, with a 10px margin, in a corner at 60px from the top, under the trip bar. */
+  .topbar__help {
+    display: none;
+  }
+
+  .topbar:has(~ .stage.is-located) .topbar__help {
+    position: fixed;
+    top: calc(60px + 10px + 24px + 8px);
+    left: 10px;
+    display: grid;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--paper);
+  }
+
+  .topbar__help svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .stage .maplibregl-ctrl-top-left {
     top: 8px;
   }
 
-  .card {
-    top: calc(var(--bar) + 48px);
-    left: 12px;
-    width: calc(100% - 24px);
-    max-height: 38%;
+  .stage.is-located .maplibregl-ctrl-top-left {
+    top: 60px;
+  }
+
+  /* The map is a stacking context under the switch. With the same z-index, the map comes later in the page and
+     paints over the switch, so the open credit stays readable. */
+  .topbar:has(~ .stage .maplibregl-compact-show) {
+    z-index: 0;
+  }
+
+  /* The switch takes the top right corner. On a phone, people zoom with two fingers. */
+  .stage .maplibregl-ctrl-top-right {
+    display: none;
+  }
+
+  /* The stations drawer. Closed, only its top `--peek` shows. `--drag` follows the finger on the handle. */
+  .card.drawer {
+    top: auto;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    max-height: calc(100% - 64px);
+    padding-bottom: env(safe-area-inset-bottom);
+    border-width: 1px 0 0;
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -4px 16px var(--ink-10);
+    overflow-y: hidden;
+    transform: translateY(max(0px, calc(100% - var(--peek) + var(--drag))));
+    transition: transform 0.3s var(--ease-out);
+  }
+
+  .card.drawer.is-open {
+    overflow-y: auto;
+    transform: translateY(max(0px, var(--drag)));
+  }
+
+  .card.drawer.is-dragging {
+    transition: none;
+  }
+
+  /* The closed drawer shows only the pickup and the best drop-off, so that the map stays in view. The sort, the
+     station count and the bike leg show when it opens. */
+  .card.drawer:not(.is-open) .sort,
+  .card.drawer:not(.is-open) .card__head .muted,
+  .card.drawer:not(.is-open) .row__route {
+    display: none;
+  }
+
+  .drawer__handle {
+    position: sticky;
+    z-index: 2;
+    top: 0;
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 24px;
+    background: var(--paper);
+    touch-action: none;
+    cursor: grab;
+  }
+
+  .drawer__grabber {
+    width: 40px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--ink-30);
+  }
+
+  .drawer .trip-check {
+    margin: 8px 12px 12px;
+  }
+
+  /* A list that scrolls inside a card that scrolls is hard to use with a thumb. */
+  .card__list {
+    flex: none;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  /* Under the drawer handle, which also sticks to the top. */
+  .card__head {
+    position: sticky;
+    z-index: 1;
+    top: 24px;
+    background: var(--paper);
+  }
+
+  .card__legend-items {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 4px 14px;
   }
 
   .dock__context {
@@ -1279,7 +1578,8 @@ button.row.is-selected:hover {
   .dock,
   .stage__glass,
   .menu,
-  .menu__scrim {
+  .menu__scrim,
+  .card.drawer {
     transition: none;
   }
 
