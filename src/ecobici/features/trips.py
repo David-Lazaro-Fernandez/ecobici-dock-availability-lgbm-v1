@@ -14,7 +14,8 @@ import polars as pl
 from ecobici.ingest.trips import DEFAULT_DIR
 
 SLOT_MINUTES = 15
-MIN_DURATION, MAX_DURATION = 1.0, 180.0  # plausible trips (M4 quality check)
+# Plausible trips (M4 quality check).
+MIN_DURATION, MAX_DURATION = 1.0, 180.0
 
 
 def load(

@@ -24,12 +24,15 @@ from ecobici.ingest import captures as s3
 from ecobici.ingest import trips as trip_ingest
 from ecobici.recommender import plan as rp
 
-S3_EVERY = timedelta(seconds=60)  # Captures arrive every 2 min.
+# Captures arrive every 2 min.
+S3_EVERY = timedelta(seconds=60)
 S3_WINDOW = live.LOOKBACK + timedelta(minutes=5)
-INFO_WINDOW = timedelta(days=2)  # station_information is captured once a day, at 06:00 UTC.
+# The station_information feed is captured once a day, at 06:00 UTC.
+INFO_WINDOW = timedelta(days=2)
 WEATHER_EVERY = timedelta(minutes=30)
 RIDE_HISTORY = timedelta(days=365)
-EMPTY_ARTIFACTS = Path("artifacts/empty")  # From: model_report --target empty --horizons 15
+# From: model_report --target empty --horizons 15.
+EMPTY_ARTIFACTS = Path("artifacts/empty")
 
 
 @dataclass(frozen=True)
@@ -113,9 +116,11 @@ class LiveService:
                 s3.download_recent(bucket, "station_status", now - S3_WINDOW, self.raw)
                 s3.download_recent(bucket, "station_information", now - INFO_WINDOW, self.raw)
                 self.s3_error = None
-            except SystemExit as e:  # From bucket_from_env.
+            # From bucket_from_env.
+            except SystemExit as e:
                 self.s3_error = str(e)
-            except Exception as e:  # noqa: BLE001 - any AWS or network error
+            # Any AWS or network error.
+            except Exception as e:  # noqa: BLE001
                 self.s3_error = f"S3 fetch failed: {e}"
 
     def current(self) -> Live:

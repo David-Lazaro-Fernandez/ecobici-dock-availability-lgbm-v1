@@ -13,7 +13,8 @@ from ecobici.collector.report import fetched_at
 from ecobici.features import targets
 from ecobici.models import lgbm
 
-T0 = datetime(2026, 10, 7, 15, 0, tzinfo=UTC)  # 09:00 CDMX, a Wednesday
+# 09:00 CDMX, a Wednesday.
+T0 = datetime(2026, 10, 7, 15, 0, tzinfo=UTC)
 INFO = {
     "data": {
         "stations": [
@@ -38,7 +39,8 @@ def test_capture_rows_match_the_snapshot_schema(tmp_path):
         [station("1", docks=0), station("2", docks=4, returning=0), station("99", docks=1)],
     )
     rows = live.capture_rows([path], INFO)
-    assert rows["station_id"].to_list() == ["1", "2"]  # "99" has no station_information
+    # "99" has no station_information.
+    assert rows["station_id"].to_list() == ["1", "2"]
     assert rows["committed_at_utc"].to_list() == [T0, T0]
     assert rows["is_returning"].to_list() == [True, False]
     assert rows["capacity"].to_list() == [20, 10]
@@ -69,7 +71,8 @@ def test_build_now_has_every_in_service_station_and_no_label(tmp_path):
     targets.load_snapshots(con, [file])
     now = targets.build_now(con, 30, T0)
     r = con.execute(f"SELECT sid, slot, target_slot, weekend, full_now, y FROM {now}").fetchall()
-    assert r == [("1", 36, 38, False, True, None)]  # 09:00 → arrival 09:30
+    # 09:00 → arrival 09:30.
+    assert r == [("1", 36, 38, False, True, None)]
 
 
 class FakeBooster:
@@ -83,7 +86,8 @@ def test_frozen_applies_the_platt_only_to_the_subgroup():
     )
     X = np.array([[0.4], [0.4], [1.5]])
     p, q = frozen.predict(X, np.array([True, False, False]))
-    assert p.tolist() == [0.4, 0.4, 1.0]  # isotonic clips at its range
+    # Isotonic clips at its range.
+    assert p.tolist() == [0.4, 0.4, 1.0]
     assert q[1:].tolist() == p[1:].tolist()
     assert np.isclose(q[0], lgbm.Platt(a=1.0, b=-1.0).predict(np.array([0.4]))[0])
     assert q[0] < p[0]

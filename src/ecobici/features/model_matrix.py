@@ -14,7 +14,8 @@ import polars as pl
 from ecobici.calendar import HOLIDAYS
 from ecobici.eval.splits import TRAIN
 
-NEIGHBOUR_RADIUS_M = 300  # PRD: neighbour occupancy "a unos 300 m"
+# PRD: neighbour occupancy "a unos 300 m".
+NEIGHBOUR_RADIUS_M = 300
 LAGS_MIN = (15, 30, 60)
 LAG_TOLERANCE_MIN = 7.5
 # The reading for "L min ago":
@@ -184,7 +185,10 @@ def _lag_sql(
     # Use the nearer reading. If equal, use the earlier one.
     use_p = f"({p_ok} AND (NOT coalesce({n_ok}, false) OR {target} - {p}.t <= {n}.t - ({target})))"
     ok = f"(coalesce({p_ok}, false) OR coalesce({n_ok}, false))"
-    pick = lambda col: f"CASE WHEN {use_p} THEN {p}.{col} ELSE {n}.{col} END"  # noqa: E731
+
+    def pick(col: str) -> str:
+        return f"CASE WHEN {use_p} THEN {p}.{col} ELSE {n}.{col} END"
+
     return [before, after], ok, pick("docks"), pick("is_full")
 
 

@@ -35,7 +35,8 @@ class Station(BaseModel):
     capacity: int | None
     docks: int | None
     bikes: int | None
-    state: str  # available | full | unavailable | stale
+    # Available | full | unavailable | stale.
+    state: str
     # P(full) at 15, 30 and 45 min, keyed by minutes. Null if not predicted.
     p_full: dict[str, float] | None
     # P(no bike) at 15 min, keyed by minutes. Null without the empty-station model.
@@ -59,16 +60,19 @@ class Pickup(Station):
 
 
 class Candidate(Station):
-    rank: int | None  # 1 = best. Null if not recommendable (out of service or stale).
+    # 1 = best. Null if not recommendable (out of service or stale).
+    rank: int | None
     recommendable: bool
-    walk_m: float  # To the destination.
+    # To the destination.
+    walk_m: float
     walk_min: float
     ride_min: float
     ride_source: str
     arrive_at: datetime
     p_full_at_arrival: float | None
     p_free: float | None
-    expected_min: float | None  # From the pickup: ride + walk + P(full) × failure cost.
+    # From the pickup: ride + walk + P(full) × failure cost.
+    expected_min: float | None
     outside_horizons: bool
 
 

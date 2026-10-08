@@ -18,7 +18,8 @@ import requests
 API = "https://historical-forecast-api.open-meteo.com/v1/forecast"
 VARIABLES = ("temperature_2m", "precipitation")
 DEFAULT_PATH = Path("data/external/openmeteo/cdmx_hourly.parquet")
-DEFAULT_START = date(2024, 4, 1)  # first MaxHalford month for CDMX
+# First MaxHalford month for CDMX.
+DEFAULT_START = date(2024, 4, 1)
 
 
 def fetch(

@@ -41,7 +41,8 @@ HISTORY_SCHEMA = {
 @dataclass(frozen=True)
 class Snapshot:
     stations: pl.DataFrame
-    feed_updated: int  # epoch seconds of the station_status document
+    # Epoch seconds of the station_status document.
+    feed_updated: int
 
 
 def read_capture(path: Path) -> dict:

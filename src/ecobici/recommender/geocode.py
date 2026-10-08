@@ -11,7 +11,8 @@ import requests
 
 NOMINATIM = "https://nominatim.openstreetmap.org/search"
 USER_AGENT = "ecobici-dock-availability-dev/0.1 (local dev viewer)"
-MARGIN_DEG = 0.02  # ~2 km around the outermost stations.
+# ~2 km around the outermost stations.
+MARGIN_DEG = 0.02
 
 
 @dataclass(frozen=True)

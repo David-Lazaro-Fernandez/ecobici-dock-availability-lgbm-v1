@@ -32,7 +32,8 @@ from ecobici.models import lgbm
 
 FORECAST_API = "https://api.open-meteo.com/v1/forecast"
 LOOKBACK = timedelta(minutes=model_matrix.LAGS_MIN[-1] + model_matrix.LAG_TOLERANCE_MIN + 2)
-MODEL_FILES = (*TRAIN, *VALIDATION)  # The M6 training and calibration months.
+# The M6 training and calibration months.
+MODEL_FILES = (*TRAIN, *VALIDATION)
 
 
 @dataclass(frozen=True)

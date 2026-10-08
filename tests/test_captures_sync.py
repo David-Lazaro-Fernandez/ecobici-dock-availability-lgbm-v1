@@ -69,10 +69,12 @@ def test_download_recent_lists_only_the_window_days(tmp_path):
     def key(day, ts):
         return f"raw/station_status/2026/10/{day}/station_status_202610{day}T{ts}Z.json.gz"
 
-    old = key("06", "235800")  # before the window
+    # Before the window.
+    old = key("06", "235800")
     late = key("06", "235900")
     early = key("07", "000100")
-    future = key("07", "001000")  # after `until`
+    # After `until`.
+    future = key("07", "001000")
     other_day = key("05", "120000")
     s3 = FakeS3([[{"Key": k, "Size": 1} for k in (other_day, old, late, early, future)]])
     listed = []

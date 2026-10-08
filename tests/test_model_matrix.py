@@ -10,7 +10,8 @@ from ecobici.features import targets
 # Tuesday 2025-03-04 15:00 UTC = 09:00 CDMX (train month). Snapshots every 15 min.
 T0 = datetime(2025, 3, 4, 15, 0, tzinfo=UTC)
 COORDS = {"A": (19.4300, -99.2000), "B": (19.4310, -99.2000), "C": (19.3850, -99.2000)}
-A_DOCKS = [6, 4, 3, 1, 0, 0, 2, 5]  # filling up, then emptying
+# Filling up, then emptying.
+A_DOCKS = [6, 4, 3, 1, 0, 0, 2, 5]
 
 
 def rows():
@@ -78,24 +79,29 @@ def test_all_declared_features_exist(con):
 
 
 def test_lags_use_past_snapshots_only(con):
-    r = a_row(con, 45)  # docks 1 now; 3 at -15, 4 at -30, 6 at -45 (no -60)
+    # Docks 1 now; 3 at -15, 4 at -30, 6 at -45 (no -60).
+    r = a_row(con, 45)
     assert (r["docks_lag15"], r["docks_lag30"], r["docks_lag60"]) == (3, 4, None)
     assert r["docks_delta15"] == -2 and r["full_lag15"] == 0
 
 
 def test_neighbours_within_300m_only(con):
-    r = a_row(con, 45)  # B (110 m) is full from snapshot 3; C (5 km) ignored
+    # B (110 m) is full from snapshot 3; C (5 km) ignored.
+    r = a_row(con, 45)
     assert r["nb_n"] == 1 and r["nb_full_frac"] == 1.0 and r["nb_docks_sum"] == 0
 
 
 def test_flow_window_sums_slots_between_now_and_arrival(con):
-    r = a_row(con, 0)  # 09:00 → 09:30: slots 36 and 37
+    # 09:00 → 09:30: slots 36 and 37.
+    r = a_row(con, 0)
     assert r["flow_net_window"] == pytest.approx(3.0)
-    assert r["flow_arrivals_target"] == pytest.approx(4.0)  # arrival slot 38
+    # Arrival slot 38.
+    assert r["flow_arrivals_target"] == pytest.approx(4.0)
 
 
 def test_weather_now_and_next_hour(con):
-    r = a_row(con, 30)  # 09:30 CDMX = 15:30 UTC → hour 15:00 UTC
+    # 09:30 CDMX = 15:30 UTC → hour 15:00 UTC.
+    r = a_row(con, 30)
     assert (r["precip_now"], r["precip_next_hour"], r["temperature_now"]) == (0.0, 2.5, 15.0)
 
 
@@ -103,7 +109,8 @@ def test_calendar_and_station_profile(con):
     r = a_row(con, 0)
     assert r["weekday"] == 2 and r["weekend"] is False and r["holiday"] is False
     assert r["minute_of_day"] == 9 * 60
-    assert r["st_full_rate"] == pytest.approx(2 / 8)  # A full in 2 of 8 snapshots
+    # A full in 2 of 8 snapshots.
+    assert r["st_full_rate"] == pytest.approx(2 / 8)
 
 
 def test_flow_window_dates():
@@ -148,7 +155,8 @@ def test_flow_window_wraps_past_midnight(tmp_path):
     targets.build_examples(con, 30)
     mm.build(con, 30)
     (window,) = con.execute("SELECT flow_net_window FROM feat_30 WHERE t = ?", [start]).fetchone()
-    assert window == pytest.approx(2.0 + 3.0)  # slots 95 and 0, not 94 or 1
+    # Slots 95 and 0, not 94 or 1.
+    assert window == pytest.approx(2.0 + 3.0)
 
 
 @pytest.mark.parametrize(

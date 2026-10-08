@@ -24,7 +24,8 @@ from ecobici.models import baselines
 
 HORIZONS = (15, 30, 45)
 MODELS = ["p_persist", "p_persist_cal", "p_hist"]
-PEAK_SLOTS = (34, 41)  # 08:30–10:30 arrivals
+# 08:30–10:30 arrivals.
+PEAK_SLOTS = (34, 41)
 SATURATED_MIN_RATE = 0.10
 
 
@@ -97,7 +98,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dir", type=Path, default=maxhalford.DEFAULT_DIR)
     args = parser.parse_args(argv)
 
-    months = [*TRAIN, *VALIDATION]  # test months stay unread
+    # Test months stay unread.
+    months = [*TRAIN, *VALIDATION]
     files = [args.dir / f"{m}.parquet" for m in months if (args.dir / f"{m}.parquet").exists()]
     con = duckdb.connect()
     targets.load_snapshots(con, files)

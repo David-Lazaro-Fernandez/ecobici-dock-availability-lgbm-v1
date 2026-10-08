@@ -21,7 +21,8 @@ def frame(n_days=40, n_stations=20, per_block=10, day_shock=0.0, seed=0):
     y = rng.random(df.height) < rate
     return df.with_columns(
         y=pl.Series(y),
-        good=pl.Series(np.where(y, 0.8, 0.2)),  # informative
+        # Informative.
+        good=pl.Series(np.where(y, 0.8, 0.2)),
         flat=pl.lit(0.3),
     )
 

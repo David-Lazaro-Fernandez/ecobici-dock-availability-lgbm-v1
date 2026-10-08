@@ -44,7 +44,8 @@ def con_for(path, horizon=15):
 def test_examples_pair_each_snapshot_with_state_at_t_plus_h(tmp_path):
     con = con_for(snapshots(tmp_path / "s.parquet", [False, True, True, False]))
     rows = con.execute("SELECT full_now, y FROM ex_15 ORDER BY t").fetchall()
-    assert rows == [(False, True), (True, True), (True, False)]  # last has no future
+    # Last has no future.
+    assert rows == [(False, True), (True, True), (True, False)]
 
 
 def test_examples_skip_gaps_beyond_tolerance(tmp_path):
@@ -62,11 +63,13 @@ def test_examples_drop_out_of_service_at_either_end(tmp_path):
 def test_examples_use_arrival_slot(tmp_path):
     con = con_for(snapshots(tmp_path / "s.parquet", [False, False]))
     slot, target_slot = con.execute("SELECT slot, target_slot FROM ex_15").fetchone()
-    assert (slot, target_slot) == (36, 37)  # 09:00 → arrival 09:15
+    # 09:00 → arrival 09:15.
+    assert (slot, target_slot) == (36, 37)
 
 
 def test_baselines_fit_on_train_and_fall_back(tmp_path):
-    seq = [False, True] * 20  # alternating: persistence is always wrong
+    # Alternating: persistence is always wrong.
+    seq = [False, True] * 20
     con = con_for(snapshots(tmp_path / "s.parquet", seq))
     baselines.predict(con, 15)
     df = con.execute("SELECT * FROM pred_15").pl()

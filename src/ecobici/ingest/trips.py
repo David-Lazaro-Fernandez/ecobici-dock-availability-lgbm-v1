@@ -25,7 +25,8 @@ from ecobici import config
 SITE = "https://ecobici.cdmx.gob.mx"
 PAGES = (f"{SITE}/en/open-data/", f"{SITE}/datos-abiertos/")
 DEFAULT_DIR = Path("data/external/trips")
-FIRST_MONTH = "2022-08"  # new system only (PRD decision)
+# New system only (PRD decision).
+FIRST_MONTH = "2022-08"
 
 SPANISH_MONTHS = {
     m: i
@@ -53,7 +54,8 @@ COLUMN_ALIASES = {
 
 @dataclass(frozen=True)
 class TripFile:
-    month: str  # YYYY-MM of arrival
+    # YYYY-MM of arrival.
+    month: str
     url: str
 
 
@@ -75,7 +77,8 @@ def discover(session: requests.Session | None = None, first: str = FIRST_MONTH) 
         resp.raise_for_status()
         links |= set(LINK.findall(resp.text))
     by_month: dict[str, str] = {}
-    for link in sorted(links):  # upload paths sort by /YYYY/MM/, so later wins
+    # Upload paths sort by /YYYY/MM/, so later wins.
+    for link in sorted(links):
         month = month_from_name(link.rsplit("/", 1)[-1])
         if month and month >= first:
             by_month[month] = link if link.startswith("http") else SITE + link
@@ -90,7 +93,8 @@ def _local_datetime(date_col: str, time_col: str) -> pl.Expr:
     ambiguous hour resolves to the earlier instant.
     """
     date = pl.col(date_col).str.strip_chars()
-    time = pl.col(time_col).str.strip_chars().str.zfill(8)  # 0:00:27 → 00:00:27
+    # 0:00:27 → 00:00:27.
+    time = pl.col(time_col).str.strip_chars().str.zfill(8)
     stamp = pl.concat_str(date, time, separator=" ")
     return (
         pl.when(date.str.contains(r"^\d{1,2}/\d{1,2}/\d{2}$"))
@@ -163,7 +167,8 @@ def fetch_resumable(
         headers = {"Range": f"bytes={have}-"} if have else {}
         try:
             with session.get(url, stream=True, timeout=(15, 60), headers=headers) as resp:
-                if resp.status_code == 416:  # nothing left to send: already complete
+                # Nothing left to send: already complete.
+                if resp.status_code == 416:
                     return
                 resp.raise_for_status()
                 resumed = resp.status_code == 206

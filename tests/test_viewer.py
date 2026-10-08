@@ -96,7 +96,8 @@ def test_app_renders_local_captures(raw):
     from streamlit.testing.v1 import AppTest
 
     at = AppTest.from_file(str(APP), default_timeout=30)
-    at.run()  # first run uses the live feed; switch to local before asserting
+    # First run uses the live feed; switch to local before asserting.
+    at.run()
     at.sidebar.radio[0].set_value("Local captures").run()
     at.sidebar.text_input[0].set_value(str(raw)).run()
     assert not at.exception

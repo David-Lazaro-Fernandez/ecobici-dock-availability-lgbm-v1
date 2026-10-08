@@ -31,7 +31,8 @@ from ecobici.features import model_matrix, targets
 from ecobici.ingest import maxhalford, openmeteo
 from ecobici.ingest import trips as trip_ingest
 
-UTC_OFFSET = np.timedelta64(6, "h")  # CDMX is UTC−6 all year since 2022.
+# CDMX is UTC−6 all year since 2022.
+UTC_OFFSET = np.timedelta64(6, "h")
 
 
 def local_midnight(day: str) -> np.datetime64:

@@ -64,7 +64,8 @@ def test_plan_ranks_by_expected_time_and_excludes_out_of_service():
 
 def test_plan_always_offers_at_least_two_candidates():
     out = rp.plan(stations(), "O", DEST, RIDES, radius_m=50, min_candidates=2)
-    assert out.height >= 2  # nothing within 50 m on foot, still the two nearest
+    # Nothing within 50 m on foot, still the two nearest.
+    assert out.height >= 2
 
 
 def test_ride_times_use_recent_trips_and_map_codes(tmp_path):
@@ -76,11 +77,14 @@ def test_ride_times_use_recent_trips_and_map_codes(tmp_path):
             "departed_at": [
                 datetime(2026, 9, 1, 8, tzinfo=tz),
                 datetime(2026, 9, 2, 8, tzinfo=tz),
-                datetime(2024, 1, 1, 8, tzinfo=tz),  # too old
-                datetime(2026, 9, 1, 8, tzinfo=tz),  # round trip, skipped
+                # Too old.
+                datetime(2024, 1, 1, 8, tzinfo=tz),
+                # Round trip, skipped.
+                datetime(2026, 9, 1, 8, tzinfo=tz),
                 datetime(2026, 9, 1, 8, tzinfo=tz),
             ],
-            "duration_min": [10.0, 14.0, 99.0, 20.0, 200.0],  # 200: not a plain ride
+            # 200: not a plain ride.
+            "duration_min": [10.0, 14.0, 99.0, 20.0, 200.0],
         }
     )
     trips.write_parquet(tmp_path / "2026-09.parquet")

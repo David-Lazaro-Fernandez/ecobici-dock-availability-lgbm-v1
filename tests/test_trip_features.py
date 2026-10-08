@@ -8,7 +8,7 @@ from ecobici.features import trips as tf
 
 CDMX = ZoneInfo("America/Mexico_City")
 MAPPING = {"001": "A", "002": "B", "003": "C"}
-TUE = datetime(2025, 3, 4, 8, 50, tzinfo=CDMX)  # Tuesday
+TUE = datetime(2025, 3, 4, 8, 50, tzinfo=CDMX)
 SAT = datetime(2025, 3, 8, 8, 50, tzinfo=CDMX)
 
 
@@ -25,15 +25,23 @@ def trip(origin, dest, departed, minutes):
 @pytest.fixture
 def root(tmp_path):
     rows = [
-        trip("001", "002", TUE, 12),  # arrives B 09:02 → slot 36
-        trip("001", "002", TUE + timedelta(days=1), 14),  # Wednesday, same slot
+        # Arrives B 09:02 → slot 36.
+        trip("001", "002", TUE, 12),
+        # Wednesday, same slot.
+        trip("001", "002", TUE + timedelta(days=1), 14),
         trip("003", "002", TUE, 13),
-        trip("002", "003", TUE + timedelta(minutes=20), 10),  # departs B 09:10
-        trip("001", "002", SAT, 12),  # weekend
-        trip("001", "001", TUE, 30),  # round trip: counted in flow, not in pairs
-        trip("001", "002", TUE, 0.5),  # implausible
-        trip("001", "999", TUE, 10),  # unmapped station
-        trip("001", "002", TUE + timedelta(days=30), 12),  # outside the window
+        # Departs B 09:10.
+        trip("002", "003", TUE + timedelta(minutes=20), 10),
+        # Weekend.
+        trip("001", "002", SAT, 12),
+        # Round trip: counted in flow, not in pairs.
+        trip("001", "001", TUE, 30),
+        # Implausible.
+        trip("001", "002", TUE, 0.5),
+        # Unmapped station.
+        trip("001", "999", TUE, 10),
+        # Outside the window.
+        trip("001", "002", TUE + timedelta(days=30), 12),
     ]
     pl.DataFrame(rows).write_parquet(tmp_path / "2025-03.parquet")
     return tmp_path

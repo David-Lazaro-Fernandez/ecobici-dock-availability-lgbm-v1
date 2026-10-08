@@ -37,7 +37,8 @@ FREE_BANDS = [(0.50, "< 50 %"), (0.80, "50–80 %"), (0.95, "80–95 %"), (1.01,
 NO_PREDICTION = ("No prediction (out of service or new)", "#c3c2b7")
 ORIGIN, DESTINATION = "#eb6834", "#0b0b0b"
 STATE = {"available": "Available", "full": "Full", "unavailable": "Unavailable", "stale": "Stale"}
-STALE_AFTER_MIN = 10  # Warn if the last capture is older.
+# Warn if the last capture is older.
+STALE_AFTER_MIN = 10
 RIDE_HISTORY = timedelta(days=365)
 S3_WINDOW = live.LOOKBACK + timedelta(minutes=5)
 DEFAULT_START = "Paseo de la Reforma 222, Juárez"
@@ -96,9 +97,11 @@ def fetch_recent() -> tuple[int, str | None]:
         info_new, _ = s3.download_recent(
             bucket, "station_information", now - timedelta(days=2), RAW
         )
-    except SystemExit as e:  # From bucket_from_env.
+    # From bucket_from_env.
+    except SystemExit as e:
         return 0, str(e)
-    except Exception as e:  # noqa: BLE001 - Show any AWS error on the page.
+    # Show any AWS error on the page.
+    except Exception as e:  # noqa: BLE001
         return 0, (f"S3 fetch failed: {e}\n\nRun `aws login` again if the session expired.")
     if info_new:
         information.clear()
@@ -164,7 +167,8 @@ def pick_point(col, role: str, key: str, box: str, ids: list[str], default_mode:
         return None
     try:
         places = find(q, box)
-    except Exception as e:  # noqa: BLE001 - Show any lookup error on the page.
+    # Show any lookup error on the page.
+    except Exception as e:  # noqa: BLE001
         col.error(f"Address lookup failed: {e}")
         return None
     if not places:
@@ -520,7 +524,8 @@ with all_tab:
                 "color": rgb(color),
                 "state": STATE.get(r["label"], r["label"]),
                 **{f"fmt_{h}": fmt_pct(r[f"p_full_{h}"]) for h in HORIZONS},
-                "order": -1.0 if r[p] is None else r[p],  # Draw the likeliest full on top.
+                # Draw the likeliest full on top.
+                "order": -1.0 if r[p] is None else r[p],
             }
         )
     rows.sort(key=lambda r: r["order"])

@@ -37,9 +37,11 @@ from ecobici.ingest import trips as trip_ingest
 from ecobici.models import lgbm
 
 LAGS = (2, 4, 10, 15, 30, 60)
-TOLERANCE_MIN = 1.0  # Label and lag windows at the 2-min cadence.
+# Label and lag windows at the 2-min cadence.
+TOLERANCE_MIN = 1.0
 BASE_H = 15
-SPLIT = (0.6, 0.8)  # Cumulative day shares: train | fit | report.
+# Cumulative day shares: train | fit | report.
+SPLIT = (0.6, 0.8)
 MIN_REPORT_WEEKDAYS = 5
 DEV_DAYS = ("2026-10-06",)
 N_BOOT = 1000
@@ -47,7 +49,8 @@ MIN_BIN_N = 1000
 BASE_ARTIFACTS = {"full": Path("artifacts"), "empty": Path("artifacts/empty")}
 MODELS = ["p_persist_cal", "p_base", "p_planner", "p_short"]
 FEATURES = [*model_matrix.features(LAGS), "p_base"]
-OWN_T0 = "(SELECT t0 FROM own_start)"  # The first capture reading.
+# The first capture reading.
+OWN_T0 = "(SELECT t0 FROM own_start)"
 
 
 def split(days: list[str]) -> tuple[dict[str, str], bool]:
@@ -80,7 +83,8 @@ def weather_for(days: list[str]) -> pl.DataFrame:
     frames = [pl.read_parquet(openmeteo.DEFAULT_PATH)]
     try:
         frames.append(openmeteo.fetch(first - timedelta(days=1), last, lat, lon))
-    except Exception as e:  # noqa: BLE001 - the live forecast below still covers today
+    # The live forecast below still covers today.
+    except Exception as e:  # noqa: BLE001
         log(f"historical forecast for the capture days failed: {e}")
     frames.append(live.forecast_weather())
     cols = frames[0].columns

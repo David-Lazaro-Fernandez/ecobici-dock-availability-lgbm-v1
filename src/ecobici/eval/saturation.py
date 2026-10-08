@@ -14,7 +14,8 @@ import duckdb
 from ecobici import config
 from ecobici.ingest import maxhalford
 
-PEAK_START_MIN = 8 * 60 + 30  # weekday morning arrival window, local time
+# Weekday morning arrival window, local time.
+PEAK_START_MIN = 8 * 60 + 30
 PEAK_END_MIN = 10 * 60 + 30
 
 

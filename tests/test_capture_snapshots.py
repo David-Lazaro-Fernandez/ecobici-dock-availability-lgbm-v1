@@ -54,7 +54,8 @@ def test_build_writes_one_file_per_day_drops_stale_and_skips_unchanged_days(tmp_
     files = cs.build(raw, out, log=logs.append)
     assert [f.name for f in files] == ["2026-10-07.parquet", "2026-10-08.parquet"]
     day1 = pl.read_parquet(files[0])
-    assert day1["station_id"].to_list() == ["1", "1"]  # station 2 is stale
+    # Station 2 is stale.
+    assert day1["station_id"].to_list() == ["1", "1"]
     assert day1.columns[:2] == ["station_id", "committed_at_utc"]
     assert len(logs) == 2
     # Nothing changed: nothing rebuilt.

@@ -22,11 +22,14 @@ import polars as pl
 
 from ecobici.eval.baseline_report import HORIZONS
 
-BIKE_KMH = 12.0  # Assumed speed, for station pairs with too few trips.
+# Assumed speed, for station pairs with too few trips.
+BIKE_KMH = 12.0
 WALK_KMH = 4.8
-DETOUR = 1.3  # Street distance / straight-line distance.
+# Street distance / straight-line distance.
+DETOUR = 1.3
 MIN_PAIR_TRIPS = 20
-MAX_TRIP_MIN = 90  # Longer trips are detours or errors, not rides between two stations.
+# Longer trips are detours or errors, not rides between two stations.
+MAX_TRIP_MIN = 90
 EARTH_M = 6_371_000
 
 
@@ -150,7 +153,8 @@ def plan(
     return out.join(ranked, on="station_id", how="left").sort(["rank", "walk_m"], nulls_last=True)
 
 
-USABLE = ("available", "full")  # In service and reporting. A full station still lends bikes.
+# In service and reporting. A full station still lends bikes.
+USABLE = ("available", "full")
 
 
 def has_bike(row: dict) -> bool:
@@ -173,9 +177,10 @@ def nearest_with_bike(stations: pl.DataFrame, point: tuple[float, float]) -> dic
     return {**r, "walk_min": r["walk_m"] / (WALK_KMH * 1000 / 60)}
 
 
-PICKUP_RADIUS_M = 600  # Max walk to a bike.
+PICKUP_RADIUS_M = 600
 PICKUP_OPTIONS = 4
-EMPTY_HORIZON = 15  # MaxHalford reads every ~15 min, so no shorter horizon is possible.
+# MaxHalford reads every ~15 min, so no shorter horizon is possible.
+EMPTY_HORIZON = 15
 
 
 def p_empty_at(p15: pl.Expr, walk_min: pl.Expr) -> pl.Expr:

@@ -30,7 +30,8 @@ def test_train_learns_signal_and_calibrates(tmp_path):
     p = model.predict(Xt)
     assert p.min() >= 0 and p.max() <= 1
     brier = np.mean((p - yt) ** 2)
-    assert brier < 0.8 * np.mean((yt.mean() - yt) ** 2)  # beats the base rate
+    # Beats the base rate.
+    assert brier < 0.8 * np.mean((yt.mean() - yt) ** 2)
     top = dict(lgbm.importance(model, top=3))
     assert "docks_now" in top
 
@@ -55,7 +56,8 @@ def test_matrix_reads_only_requested_months_and_keeps_y_in_meta():
     X, y, meta = lgbm.matrix(con, "feat", ("2025-03",), extra=["p_hist"])
     assert X.shape == (2, len(FEATURES)) and X.dtype == np.float32
     assert y.tolist() == [1, 1]
-    assert meta["sid"].to_list() == ["A", "C"]  # ordered by station, then time
+    # Ordered by station, then time.
+    assert meta["sid"].to_list() == ["A", "C"]
     assert meta.columns == ["y", "sid", "target_slot", "weekend", "p_hist"]
 
 
@@ -82,10 +84,12 @@ def test_rolling_recalibrate_uses_only_the_past_and_tracks_drift():
     first_week = (times >= np.datetime64("2025-10-29")) & (times < np.datetime64("2025-11-05"))
     mixed = (times >= np.datetime64("2025-11-19")) & (times < np.datetime64("2025-11-26"))
     late = times >= np.datetime64("2025-12-03")
-    assert out[first_week].mean() > 0.45  # only saw the 50% era
+    # Only saw the 50% era.
+    assert out[first_week].mean() > 0.45
     # Window [10-22, 11-18): 7 days at 50% and 20 at 10% → ≈ 0.20.
     assert abs(out[mixed].mean() - (7 * 0.5 + 20 * 0.1) / 27) < 0.02
-    assert out[late].mean() < 0.12  # window is entirely in the 10% era
+    # Window is entirely in the 10% era.
+    assert out[late].mean() < 0.12
 
 
 def test_platt_corrects_overconfidence_and_round_trips(tmp_path):
@@ -97,7 +101,8 @@ def test_platt_corrects_overconfidence_and_round_trips(tmp_path):
     platt = lgbm.Platt.fit(p, y)
     assert abs(platt.a - 0.6) < 0.05 and abs(platt.b + 0.4) < 0.05
     q = platt.predict(p)
-    assert np.all(np.diff(q[np.argsort(p)]) >= 0)  # monotone
+    # Monotone.
+    assert np.all(np.diff(q[np.argsort(p)]) >= 0)
     assert np.abs(q - truth).max() < 0.03
 
     platt.save(tmp_path / "platt.json")

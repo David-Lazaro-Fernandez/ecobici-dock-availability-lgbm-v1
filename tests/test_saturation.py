@@ -43,13 +43,15 @@ def test_v1_peak_counts(con):
     r = saturation.v1(con)
     assert r["overall_full_rate"] == pytest.approx(6 / 12)
     assert r["peak_stations"] == 3
-    assert r["peak_ge_50"] == 2  # A (100%) and B (50%)
+    # A (100%) and B (50%).
+    assert r["peak_ge_50"] == 2
     assert r["peak_top"][0][0] == "CE-A"
 
 
 def test_v6_only_walkable_neighbours_count(con):
     r = saturation.v6(con)
-    assert r["stations_with_neighbour"] == 2  # A and B; C is too far
+    # A and B; C is too far.
+    assert r["stations_with_neighbour"] == 2
     # Given A full (4 readings), B was full in 2; given B full (2), A was full in 2.
     assert r["p_b_full_given_a"] == pytest.approx(4 / 6)
     assert r["p_all_neighbours_full"] == pytest.approx(4 / 6)

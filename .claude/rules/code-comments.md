@@ -9,6 +9,32 @@ The code must explain itself. Comments add only what the code cannot say.
 - Put fixed values in named constants: `STALE_AFTER_SECONDS = 3 * 60 * 60`, not a
   number with a comment.
 
+## No end-of-line comments
+
+Do not put a comment at the end of a line of code. This applies to all languages: Python
+`# …`, TypeScript `// …`, CSS `/* … */`.
+
+- If the comment tells what the value is, put that meaning in the name.
+
+  ```css
+  /* Wrong */
+  --free-0: #63bf75; /* < 50 % */
+
+  /* Right */
+  --free-less-than-50: #63bf75;
+  ```
+
+- If the comment tells why, write it on its own line above the code.
+
+  ```python
+  # Captures arrive every 2 min.
+  S3_EVERY = timedelta(seconds=60)
+  ```
+
+- Linter directives are not comments and stay where the tool needs them
+  (`# noqa: BLE001`, `// eslint-disable-line`). Put the reason for the directive on the
+  line above.
+
 ## Write a comment only to tell why
 
 Write a comment when the code cannot show:

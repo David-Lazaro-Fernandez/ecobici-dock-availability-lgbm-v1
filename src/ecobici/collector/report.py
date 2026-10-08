@@ -28,7 +28,7 @@ KEY_TS = re.compile(r"_(\d{8}T\d{6}Z)\.json\.gz$")
 
 # Upper bounds (minutes) of the silence buckets for in-service stations.
 SILENCE_BUCKETS = ((30, "< 30 min"), (60, "30-60 min"), (180, "1-3 h"), (1440, "3-24 h"))
-MORNING = (time(7), time(11))  # Local time.
+MORNING_LOCAL = (time(7), time(11))
 
 
 @dataclass
@@ -66,14 +66,15 @@ def silence_bucket(station: dict, feed_last_updated: int) -> str:
 
 
 def morning_coverage(times: list[datetime], interval_s: int) -> dict[date, tuple[int, int]]:
-    """Captures and expected captures per weekday morning (MORNING, local time). Only
+    """Captures and expected captures per weekday morning (MORNING_LOCAL). Only
     the mornings fully between the first and the last capture count."""
     if not times:
         return {}
     tz = config.LOCAL_TZ
     expected = int(
         (
-            datetime.combine(date.min, MORNING[1]) - datetime.combine(date.min, MORNING[0])
+            datetime.combine(date.min, MORNING_LOCAL[1])
+            - datetime.combine(date.min, MORNING_LOCAL[0])
         ).total_seconds()
         // interval_s
     )
@@ -81,8 +82,8 @@ def morning_coverage(times: list[datetime], interval_s: int) -> dict[date, tuple
     out = {}
     day = local[0].date()
     while day <= local[-1].date():
-        start = datetime.combine(day, MORNING[0], tz)
-        end = datetime.combine(day, MORNING[1], tz)
+        start = datetime.combine(day, MORNING_LOCAL[0], tz)
+        end = datetime.combine(day, MORNING_LOCAL[1], tz)
         if day.weekday() < 5 and local[0] <= start and end <= local[-1]:
             out[day] = (sum(start <= t < end for t in local), expected)
         day += timedelta(days=1)

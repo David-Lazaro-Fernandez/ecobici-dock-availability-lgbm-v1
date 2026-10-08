@@ -65,7 +65,8 @@ CHECKED = (PRIMARY, "p_lgbm_recal", "p_lgbm_sub", FROZEN)
 # the static VAL_FIT map.
 SUB_MIN_ROWS = 5000
 N_BOOT = 1000
-REPORT_START = np.datetime64("2025-10-01T06:00")  # 2025-10-01 00:00 CDMX, in UTC
+# 2025-10-01 00:00 CDMX, in UTC.
+REPORT_START = np.datetime64("2025-10-01T06:00")
 TARGET_BSS_PRODUCT = 0.10
 TARGET_CALIBRATION = 0.05
 MIN_BIN_N = 1000
@@ -318,7 +319,8 @@ def evaluate(report: pl.DataFrame, saturated: list[str], center: set[str], h: in
                     "p_ok": float((gaps <= TARGET_CALIBRATION).mean()),
                 }
             )
-            if block == "day":  # the wider interval goes on the reliability diagram
+            # The wider interval goes on the reliability diagram.
+            if block == "day":
                 olo, ohi = bootstrap.interval(obs)
                 rel[m] = rel[m].with_columns(
                     observed_lo=pl.Series(olo).gather(rel[m]["bin"]),
@@ -416,7 +418,8 @@ def render(results: list[dict], title: str = "Resultados (validación, 2025-10 �
             for b in rel.iter_rows(named=True):
                 band = (
                     f"[{b['observed_lo']:.3f}, {b['observed_hi']:.3f}]"
-                    if b["observed_lo"] == b["observed_lo"]  # NaN: bin too small
+                    # NaN: bin too small.
+                    if b["observed_lo"] == b["observed_lo"]
                     else "—"
                 )
                 out.append(
@@ -526,7 +529,8 @@ def main(argv: list[str] | None = None) -> int:
     figure = "M6_reliability_empty.png" if empty else "M6_reliability.png"
     args.figure = args.figure or Path("docs/reports/figures") / figure
 
-    months = [*TRAIN, *VALIDATION]  # test months stay unread
+    # Test months stay unread.
+    months = [*TRAIN, *VALIDATION]
     files = [args.dir / f"{m}.parquet" for m in months if (args.dir / f"{m}.parquet").exists()]
     # Cap DuckDB and let it spill: by default it may take 80% of RAM, which starves
     # LightGBM and the rest of the machine.

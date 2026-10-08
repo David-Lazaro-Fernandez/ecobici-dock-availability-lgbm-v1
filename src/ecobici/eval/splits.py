@@ -12,7 +12,8 @@ TEST = ("2026-01", "2026-09")
 # 2026-09 counts only from the scraper's recovery (M2, "2026-09 en detalle"): before
 # 09-11 local it still has the 2026-02..08 degradation. Its 12-min cadence shifts the
 # 15/30/45 targets by −3/−6/+3 min, so it is reported apart from 2026-01.
-TEST_FROM = {"2026-09": "2026-09-11"}  # local date, inclusive
+# Local date, inclusive.
+TEST_FROM = {"2026-09": "2026-09-11"}
 
 SPLITS = {"train": TRAIN, "validation": VALIDATION, "test": TEST}
 
