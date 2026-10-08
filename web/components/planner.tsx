@@ -4,7 +4,7 @@
 // stations. The search bar edits one end of the trip at a time (From, then To).
 
 import dynamic from 'next/dynamic';
-import { type CSSProperties, type SyntheticEvent, type KeyboardEvent, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { type CSSProperties, type SyntheticEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { type Candidate, type PlanResponse, type StationsResponse, useApi } from '@/lib/api';
 import { type PlacesFile, type Suggestion, bbox, buildIndex, cachedOnline, geocode, loadPlaces, merge, plain, searchPlaces } from '@/lib/places';
 import { Bike, Clock, Close, Dock, Locate, More, Pin, Send, Sliders, Walk } from '@/components/icons';
@@ -72,6 +72,19 @@ function usePhone() {
     () => window.matchMedia(PHONE).matches,
     () => false,
   );
+}
+
+// The card fits above the dock. The dock height changes with the trip ends, the summary and the trip question.
+function useHeight<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    if (!ref.current) return;
+    const observer = new ResizeObserver(([entry]) => setHeight(entry.borderBoxSize[0].blockSize));
+    observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, height] as const;
 }
 
 const SORTS: { key: SortKey; icon: () => React.JSX.Element }[] = [
@@ -152,6 +165,7 @@ function Row({ c, selected, bike, withCode, onSelect }: { c: Candidate; selected
 
 export function Planner() {
   const phone = usePhone();
+  const [dockRef, dockHeight] = useHeight<HTMLDivElement>();
   const lang = useLang();
   const t = useMessages();
   const clock = useMemo(() => clockFor(t.locale), [t.locale]);
@@ -411,7 +425,7 @@ export function Planner() {
         </div>
       </header>
 
-      <section className={`stage ${located ? 'is-located' : ''}`} style={{ '--card-width': `${CARD_WIDTH}px` } as CSSProperties}>
+      <section className={`stage ${located ? 'is-located' : ''}`} style={{ '--card-width': `${CARD_WIDTH}px`, '--dock-height': `${dockHeight}px` } as CSSProperties}>
         <div className="stage__map">
           <TripMap
             center={CDMX}
@@ -537,7 +551,7 @@ export function Planner() {
         {phone && <div className={`menu__scrim ${menu ? 'is-open' : ''}`} aria-hidden="true" onClick={() => setMenu(false)} />}
         {/* The dock has a transform, so a fixed sheet inside it would stay on the dock. */}
         {phone && menuBox}
-        <div className="dock">
+        <div className="dock" ref={dockRef}>
           {!phone && menuBox}
           <TripCheck currentPlanId={planId} />
           {located && (
@@ -560,7 +574,8 @@ export function Planner() {
               </button>
             </div>
           )}
-          {located && context && (
+          {/* On a phone, the open card already shows the best drop-off. */}
+          {located && context && !(phone && showCard) && (
             <div className="dock__context">
               <span>{context}</span>
               {start && goal && result && !cardOpen && (

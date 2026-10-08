@@ -753,9 +753,10 @@ input:focus-visible {
   top: calc(var(--bar) + 52px);
   left: 24px;
   width: min(var(--card-width), calc(100% - 48px));
-  max-height: calc(100% - var(--bar) - 52px - 230px);
+  max-height: calc(100% - var(--bar) - 52px - var(--dock-height) - 40px);
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
   background: var(--paper);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -959,9 +960,15 @@ button.row.is-selected:hover {
 
 .card__list {
   list-style: none;
+  min-height: 96px;
   margin: 0;
   padding: 0 16px;
   overflow-y: auto;
+}
+
+/* Only the list shrinks. If the other parts do not fit, the card scrolls. */
+.card > :not(.card__list) {
+  flex-shrink: 0;
 }
 
 .card__list > li {
@@ -1203,7 +1210,27 @@ button.row.is-selected:hover {
     top: calc(var(--bar) + 48px);
     left: 12px;
     width: calc(100% - 24px);
-    max-height: 38%;
+    max-height: calc(100% - var(--bar) - 48px - var(--dock-height) - 32px);
+  }
+
+  /* A list that scrolls inside a card that scrolls is hard to use with a thumb. */
+  .card__list {
+    flex: none;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .card__head {
+    position: sticky;
+    z-index: 1;
+    top: 0;
+    background: var(--paper);
+  }
+
+  .card__legend-items {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 4px 14px;
   }
 
   .dock__context {
