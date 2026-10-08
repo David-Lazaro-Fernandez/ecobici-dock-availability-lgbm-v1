@@ -1,0 +1,16 @@
+[Unit]
+Description=Ecobici dock availability API
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=ecobici
+EnvironmentFile=/etc/ecobici/api.env
+WorkingDirectory=/opt/ecobici
+ExecStart=/opt/ecobici/.venv/bin/uvicorn ecobici.api:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+MemoryMax=1500M
+
+[Install]
+WantedBy=multi-user.target
