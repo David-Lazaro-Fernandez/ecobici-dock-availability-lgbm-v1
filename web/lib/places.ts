@@ -13,7 +13,7 @@ const MARGIN_DEG = 0.02;
 const STATION_RANK = -1;
 
 export type Suggestion = { lat: number; lng: number; name: string; context: string; stationId?: string };
-type Place = Suggestion & { rank: number; plain: string; words: string[] };
+type Place = Suggestion & { rank: number; plain: string; words: string[]; kindWords: string[] };
 export type PlacesFile = { version: number; kinds: string[]; places: [string, number, number, number][] };
 
 /** Lowercase, no accents or punctuation: "Álvaro Obregón" → "alvaro obregon". */
@@ -30,9 +30,14 @@ export function plain(text: string) {
 // So that "roma" also starts "Colonia Roma Norte".
 const LEADING = /^(colonia|col|barrio|estacion) /;
 
-function makePlace(s: Suggestion, rank: number): Place {
+// People type the kind with the name: "metro doctores", "estación ecobici reforma". The index name has no kind.
+const STATION_KIND_WORDS = ['ecobici', 'estacion'];
+const TRANSIT_KIND_WORDS: Record<string, string[]> = { Metro: ['estacion'], Metrobús: ['mb', 'estacion'], 'Tren ligero': ['estacion'] };
+const kindWordsOf = (kind: string) => [...plain(kind).split(' '), ...(TRANSIT_KIND_WORDS[kind] ?? [])];
+
+function makePlace(s: Suggestion, rank: number, kindWords: string[] = []): Place {
   const p = plain(s.name);
-  return { ...s, rank, plain: p.replace(LEADING, ''), words: p.split(' ') };
+  return { ...s, rank, plain: p.replace(LEADING, ''), words: p.split(' '), kindWords };
 }
 
 let placesFile: Promise<PlacesFile | null> | null = null;
@@ -54,34 +59,42 @@ export function buildIndex(file: PlacesFile | null, stations: Station[], labels:
     makePlace(
       { lat: s.lat, lng: s.lng, name: s.name.replace(/^CE-\d+\s*/, ''), context: labels.station(s.code), stationId: s.id },
       STATION_RANK,
+      STATION_KIND_WORDS,
     ),
   );
-  for (const [name, kind, lat, lng] of file?.places ?? []) out.push(makePlace({ lat, lng, name, context: labels.kind(file!.kinds[kind]) }, kind));
+  const kindWords = file?.kinds.map(kindWordsOf) ?? [];
+  for (const [name, kind, lat, lng] of file?.places ?? [])
+    out.push(makePlace({ lat, lng, name, context: labels.kind(file!.kinds[kind]) }, kind, kindWords[kind]));
   return out;
 }
 
 const km = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) =>
   Math.hypot(a.lat - b.lat, (a.lng - b.lng) * Math.cos((a.lat * Math.PI) / 180)) * 111.32;
 
-/** Places where each typed word starts a word of the name. Order: same start, kind, distance to `near`, shorter
- *  name. */
+/** Places where each typed word starts a word of the name or is a word of the kind ("metro"). One word at least
+ *  must match the name. Order: kind typed, same start, kind, distance to `near`, shorter name. */
 export function searchPlaces(index: Place[], query: string, near: { lat: number; lng: number }, limit: number): Suggestion[] {
   const q = plain(query);
   if (!q) return [];
   const tokens = q.split(' ');
-  const hits: { place: Place; score: number; km: number }[] = [];
+  const hits: { place: Place; nameOnly: number; score: number; km: number }[] = [];
   for (const place of index) {
-    if (!tokens.every((t) => place.words.some((w) => w.startsWith(t)))) continue;
-    hits.push({ place, score: place.plain.startsWith(q) ? 0 : 1, km: km(near, place) });
+    const inName = tokens.filter((t) => place.words.some((w) => w.startsWith(t)));
+    if (!inName.length || !tokens.every((t) => inName.includes(t) || place.kindWords.includes(t))) continue;
+    const nameOnly = inName.length === tokens.length ? 1 : 0;
+    hits.push({ place, nameOnly, score: place.plain.startsWith(inName.join(' ')) ? 0 : 1, km: km(near, place) });
   }
-  hits.sort((a, b) => a.score - b.score || a.place.rank - b.place.rank || a.km - b.km || a.place.name.length - b.place.name.length);
+  hits.sort(
+    (a, b) =>
+      a.nameOnly - b.nameOnly || a.score - b.score || a.place.rank - b.place.rank || a.km - b.km || a.place.name.length - b.place.name.length,
+  );
   const seen = new Set<string>();
   const out: Suggestion[] = [];
   for (const { place } of hits) {
     const key = `${place.plain}|${place.context}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const { rank, plain: _, words, ...s } = place;
+    const { rank, plain: _, words, kindWords, ...s } = place;
     out.push(s);
     if (out.length >= limit) break;
   }
