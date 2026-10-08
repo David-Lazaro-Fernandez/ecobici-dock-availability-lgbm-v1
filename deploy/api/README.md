@@ -99,9 +99,12 @@ Root directory `web/`. Environment variable `NEXT_PUBLIC_API_URL=https://your-ap
 ## Updating
 
 `setup.sh` enables the `ecobici-autodeploy` timer. Every 5 minutes it fetches the branch that
-the server checkout tracks. If there are new commits, it fast-forwards and runs `setup.sh`.
-Thus a push to that branch is a deploy to prod. To deploy another branch, switch the
-checkout to it.
+the server checkout tracks. If the branch is not the commit in `/opt/ecobici/DEPLOYED`, it
+fast-forwards and runs `setup.sh`. Thus a push to that branch is a deploy to prod. A failed
+deploy runs again 5 minutes later. To deploy another branch, switch the checkout to it.
+
+`setup.sh` copies the tracked files of the checkout through a stage dir in `/opt`. With
+SELinux, `rsync` started by systemd cannot read `/home`.
 
 ```sh
 systemctl list-timers ecobici-autodeploy.timer

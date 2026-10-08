@@ -5,7 +5,10 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+REPO_OWNER="$(stat -c %U "$REPO_DIR")"
 APP_DIR=/opt/ecobici
+# The commit that runs in APP_DIR. autodeploy.sh compares it with the branch, so a failed deploy runs again.
+DEPLOYED_FILE="$APP_DIR/DEPLOYED"
 ENV_FILE=/etc/ecobici/api.env
 REQUIRED_ARTIFACTS=(serving empty lgbm_15.txt isotonic_15.json platt_sub_15.json)
 
@@ -15,10 +18,19 @@ export PATH="$PATH:/usr/local/bin"
 id ecobici &>/dev/null || useradd --system --home-dir "$APP_DIR" --shell /sbin/nologin ecobici
 command -v rsync &>/dev/null || dnf install -y rsync
 
+git_as_owner() {
+  runuser -u "$REPO_OWNER" -- env HOME="$(getent passwd "$REPO_OWNER" | cut -d: -f6)" git -C "$REPO_DIR" "$@"
+}
+
 mkdir -p "$APP_DIR"
+# SELinux: from a systemd unit, rsync runs as rsync_t, which cannot read /home or a unit's /tmp. A stage dir in
+# /opt gets usr_t, which rsync_t can read. git archive also leaves out untracked files.
+STAGE_DIR="$(mktemp -d -p /opt ecobici-stage.XXXXXX)"
+trap 'rm -rf "$STAGE_DIR"' EXIT
+git_as_owner archive HEAD | tar -x -C "$STAGE_DIR"
 # Excluded paths are not deleted, so the copied model files stay.
-rsync -a --delete --exclude .venv --exclude .git --exclude artifacts --exclude data \
-  --exclude raw --exclude web --exclude .env --exclude /api.env "$REPO_DIR"/ "$APP_DIR"/
+rsync -a --delete --exclude .venv --exclude artifacts --exclude data --exclude raw --exclude web \
+  --exclude .env --exclude /api.env --exclude /DEPLOYED "$STAGE_DIR"/ "$APP_DIR"/
 
 if ! command -v uv &>/dev/null; then
   curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
@@ -53,4 +65,5 @@ chown -R ecobici:ecobici "$APP_DIR/artifacts"
 systemctl enable ecobici-api
 systemctl restart ecobici-api
 systemctl enable --now ecobici-autodeploy.timer
-echo "Installed. Check: curl http://127.0.0.1:8000/docs"
+git_as_owner rev-parse HEAD > "$DEPLOYED_FILE"
+echo "Installed $(cat "$DEPLOYED_FILE"). Check: curl http://127.0.0.1:8000/docs"
