@@ -30,7 +30,9 @@ mkdir -p /etc/ecobici
 [ -f "$ENV_FILE" ] || install -m 600 deploy/api/api.env.example "$ENV_FILE"
 chown ecobici:ecobici "$ENV_FILE"
 
-cp deploy/api/ecobici-api.service /etc/systemd/system/
+cp deploy/api/ecobici-api.service deploy/api/ecobici-autodeploy.service \
+  deploy/api/ecobici-autodeploy.timer /etc/systemd/system/
+printf 'REPO_DIR=%s\n' "$REPO_DIR" > /etc/ecobici/autodeploy.env
 systemctl daemon-reload
 
 if grep -q YOUR- "$ENV_FILE"; then
@@ -47,4 +49,5 @@ chown -R ecobici:ecobici "$APP_DIR/artifacts"
 
 systemctl enable ecobici-api
 systemctl restart ecobici-api
+systemctl enable --now ecobici-autodeploy.timer
 echo "Installed. Check: curl http://127.0.0.1:8000/docs"

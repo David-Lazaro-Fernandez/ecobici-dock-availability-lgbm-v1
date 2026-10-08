@@ -1,6 +1,6 @@
 # API on Oracle Linux
 
-Runs `ecobici.api` with uvicorn behind Caddy (HTTPS). The web app runs on Vercel and calls
+Runs `ecobici.api` with uvicorn behind a Cloudflare Tunnel (HTTPS). The web app runs on Vercel and calls
 this API.
 
 ## 1. AWS access
@@ -42,33 +42,38 @@ curl http://127.0.0.1:8000/docs
 
 Set `ECOBICI_API_ORIGINS` to the exact Vercel URL, without a trailing slash.
 
-## 4. HTTPS with Caddy
+## 4. HTTPS with Cloudflare Tunnel
 
-Point a DNS A record at this machine. Install Caddy:
+The tunnel connects out to Cloudflare, so the machine needs no open ports and no
+certificate. You need a domain in Cloudflare.
 
 ```sh
-sudo dnf install -y dnf-plugins-core
-sudo dnf copr enable @caddy/caddy && sudo dnf install -y caddy
+sudo dnf install -y https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-aarch64.rpm
 ```
 
-If the COPR repository fails, install the release binary from
-<https://github.com/caddyserver/caddy/releases> and its systemd unit.
+In the Cloudflare dashboard (Zero Trust, Networks, Tunnels), create a tunnel. Add a public
+hostname, for example `api.your-domain`, with the service `http://127.0.0.1:8000`. Run the
+install command that the dashboard shows. It contains the tunnel token, so do not commit it:
 
-Copy `Caddyfile` to `/etc/caddy/Caddyfile` and set your domain. Then:
+```sh
+sudo cloudflared service install <TOKEN>
+curl https://api.your-domain/v1/stations
+```
+
+### Alternative: Caddy
+
+With a DNS A record on this machine, install Caddy (`sudo dnf install -y dnf-plugins-core &&
+sudo dnf copr enable @caddy/caddy && sudo dnf install -y caddy`, or the release binary from
+<https://github.com/caddyserver/caddy/releases>). Copy `Caddyfile` to `/etc/caddy/Caddyfile`
+with your domain, then:
 
 ```sh
 sudo systemctl enable --now caddy
 sudo firewall-cmd --permanent --add-service=http --add-service=https && sudo firewall-cmd --reload
 ```
 
-If `getenforce` prints `Enforcing`, let Caddy connect to the API:
-
-```sh
-sudo setsebool -P httpd_can_network_connect 1
-```
-
-Also open ports 80 and 443 in the OCI security list of the subnet.
-Without a domain, use a Cloudflare Tunnel to `http://127.0.0.1:8000` instead of Caddy.
+If `getenforce` prints `Enforcing`, run `sudo setsebool -P httpd_can_network_connect 1`. Also
+open ports 80 and 443 in the OCI security list of the subnet.
 
 ## 5. Vercel
 
@@ -76,9 +81,16 @@ Root directory `web/`. Environment variable `NEXT_PUBLIC_API_URL=https://your-ap
 
 ## Updating
 
+`setup.sh` enables the `ecobici-autodeploy` timer. Every 5 minutes it fetches the branch that
+the server checkout tracks. If there are new commits, it fast-forwards and runs `setup.sh`.
+Thus a push to that branch is a deploy to prod. To deploy another branch, switch the
+checkout to it.
+
 ```sh
-git pull && sudo ./deploy/api/setup.sh
+systemctl list-timers ecobici-autodeploy.timer
+journalctl -u ecobici-autodeploy -n 50
+sudo systemctl start ecobici-autodeploy
 ```
 
-After a new model or bundle, copy the model files again (step 2), then run
-`sudo systemctl restart ecobici-api`.
+The last command deploys now. The timer does not update the model files. After a new model
+or bundle, copy the model files again (step 2), then run `sudo systemctl restart ecobici-api`.

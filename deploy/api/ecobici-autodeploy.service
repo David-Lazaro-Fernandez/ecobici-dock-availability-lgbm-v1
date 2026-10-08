@@ -1,0 +1,9 @@
+[Unit]
+Description=Pull and deploy new commits of the Ecobici API
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/ecobici/autodeploy.env
+ExecStart=/bin/bash ${REPO_DIR}/deploy/api/autodeploy.sh
