@@ -777,9 +777,12 @@ input:focus-visible {
   border-radius: 8px;
 }
 
+/* The bar sits a little under the middle, so about half the screen minus 100px is free below it. */
 .suggest--down {
   top: calc(100% + 8px);
   bottom: auto;
+  max-height: calc(50svh - 100px);
+  overflow-y: auto;
 }
 
 .suggest__item {
@@ -1446,6 +1449,11 @@ button.row.is-selected:hover {
 
   .card.drawer.is-dragging {
     transition: none;
+  }
+
+  /* The sort changes the full list only, so the closed drawer leaves it out and shows more map. */
+  .card.drawer:not(.is-open) .sort {
+    display: none;
   }
 
   .drawer__handle {

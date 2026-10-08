@@ -144,7 +144,11 @@ test('on a phone, the handle opens and closes the drawer', async ({ page }) => {
   const drawer = page.locator('.drawer');
   await openStations(page);
   await expectAbove(page.locator('.trip-bar'), drawer);
-  await expectInViewport(page.locator('.card__legend'));
+  await expect(page.locator('.sort')).toBeVisible();
+  const legend = page.locator('.card__legend');
+  await legend.scrollIntoViewIfNeeded();
+  await expectInside(legend, drawer);
+  await expectInViewport(legend);
   await page.locator('.drawer__handle').click();
   await expect(drawer).not.toHaveClass(/is-open/);
   await expectClosedDrawerFits(page);
