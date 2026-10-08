@@ -9,13 +9,16 @@ APP_DIR=/opt/ecobici
 ENV_FILE=/etc/ecobici/api.env
 REQUIRED_ARTIFACTS=(serving empty lgbm_15.txt isotonic_15.json platt_sub_15.json)
 
+# The sudo secure_path on Oracle Linux does not include /usr/local/bin, where uv installs.
+export PATH="$PATH:/usr/local/bin"
+
 id ecobici &>/dev/null || useradd --system --home-dir "$APP_DIR" --shell /sbin/nologin ecobici
 command -v rsync &>/dev/null || dnf install -y rsync
 
 mkdir -p "$APP_DIR"
 # Excluded paths are not deleted, so the copied model files stay.
 rsync -a --delete --exclude .venv --exclude .git --exclude artifacts --exclude data \
-  --exclude raw --exclude web --exclude .env "$REPO_DIR"/ "$APP_DIR"/
+  --exclude raw --exclude web --exclude .env --exclude /api.env "$REPO_DIR"/ "$APP_DIR"/
 
 if ! command -v uv &>/dev/null; then
   curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
