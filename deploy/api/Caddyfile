@@ -1,5 +1,5 @@
-# Replace api.example.com with a domain whose DNS A record points to this machine.
+# The DuckDNS subdomain must point to the public IP of this machine.
 # Caddy gets and renews the HTTPS certificate by itself.
-api.example.com {
+ecobici-docks.duckdns.org {
 	reverse_proxy 127.0.0.1:8000
 }
