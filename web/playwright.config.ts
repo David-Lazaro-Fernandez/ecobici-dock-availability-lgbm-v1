@@ -8,7 +8,7 @@ const BASE_URL = `http://localhost:${PORT}`;
 const CI = Boolean(process.env.CI);
 
 // Chromium only, so one browser download covers every phone size.
-const phone = (device: keyof typeof devices) => ({ name: device, use: { ...devices[device], browserName: 'chromium' as const } });
+const phone = (device: string) => ({ name: device, use: { ...devices[device], browserName: 'chromium' as const } });
 
 export default defineConfig({
   testDir: 'e2e',
