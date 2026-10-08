@@ -10,6 +10,7 @@ import { type PlacesFile, type Suggestion, bbox, buildIndex, cachedOnline, geoco
 import { Clock, Close, Dock, Locate, Pin, Send, Sliders, Walk } from '@/components/icons';
 import { type SortKey, sortCandidates } from '@/lib/sort';
 import { type Leg, useTripRoutes } from '@/lib/routes';
+import { pct } from '@/lib/format';
 import { FREE_STEPS } from '@/components/trip-map';
 
 const TripMap = dynamic(() => import('@/components/trip-map'), { ssr: false });
@@ -31,7 +32,6 @@ const FREE_LEGEND = ['< 50 %', '50–80 %', '80–95 %', '≥ 95 %'];
 type End = 'from' | 'to';
 type Picked = { lat: number; lng: number; label: string; stationId?: string };
 
-const pct = (p: number | null) => (p == null ? '—' : `${Math.round(p * 100)} %`);
 const minutes = (m: number) => `${Math.max(1, Math.round(m))} min`;
 const meters = (m: number) => (m < 950 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(1)} km`);
 const shortName = (name: string) => name.replace(/^CE-\d+\s*/, '');
@@ -39,6 +39,8 @@ const shortName = (name: string) => name.replace(/^CE-\d+\s*/, '');
 const Code = ({ code }: { code: string }) => <span className="code">{code}</span>;
 const whyNoBike = (s: { state: string }) =>
   s.state === 'unavailable' ? 'está fuera de servicio' : s.state === 'stale' ? 'no envía datos recientes' : 'no tiene bicis ahora';
+// The ranking uses the arrival at the destination, so the row shows that time, not the arrival at the station.
+const atDestination = (c: Candidate) => new Date(new Date(c.arrive_at).getTime() + c.walk_min * 60_000);
 const band = (p: number | null) => (p == null ? 'none' : String(FREE_STEPS.filter((s) => p >= s).length));
 // Show the risk of an empty pickup only when it can change the decision.
 const EMPTY_RISK_SHOWN = 0.1;
@@ -95,7 +97,7 @@ function Row({ c, selected, route, onSelect }: { c: Candidate; selected: boolean
             {c.rank === 1 && <span className="row__tag">Mejor</span>}
           </strong>
           <span className="muted">
-            Llegas {clock.format(new Date(c.arrive_at))} · {meters(c.walk_m)} a pie
+            Llegas a tu destino {clock.format(atDestination(c))} · {meters(c.walk_m)} a pie · {c.docks ?? '—'} libres ahora
           </span>
           {selected && route && <span className="row__route">{route}</span>}
         </span>
@@ -426,7 +428,9 @@ export function Planner() {
                 </span>
               </button>
               <button type="button" className={`end ${editing === 'to' ? 'is-on' : ''}`} onClick={() => setEditing('to')}>
-                <span className="dot dot--goal" aria-hidden="true" />
+                <span className="end__pin" aria-hidden="true">
+                  <Pin />
+                </span>
                 <span className="end__text">
                   <small>Hasta</small>
                   {goal?.label ?? 'Elige un destino'}

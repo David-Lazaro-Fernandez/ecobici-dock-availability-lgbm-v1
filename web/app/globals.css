@@ -1,5 +1,5 @@
-/* Layout from the a-donde-ir skeleton, with this project's colours. The ramp and the accent come from the validated
-   chart palette (contrast 2:1 or more on the light map). The basemap is light, so the page is light only. */
+/* Layout from the a-donde-ir skeleton, with this project's colours. The probability ramp is one green hue, light to
+   dark; its lightest step is 2:1 or more on white. The basemap is light, so the page is light only. */
 
 :root {
   color-scheme: light;
@@ -8,17 +8,22 @@
   --line: #e4e3df;
   --paper: #ffffff;
   --bg: #f6f6f4;
-  --soft: #eaf1fb; /* hover and focus wash */
+  /* White text on --primary: 4.17:1. On --primary-hover, white is 2.27:1: use ink. */
+  --primary: #168f3d;
+  --primary-hover: #63bf75;
+  --highlight-wash: #e8f5ec;
   --ink-10: rgba(11, 11, 11, 0.1);
   --ink-30: rgba(11, 11, 11, 0.3);
-  --accent: #eb6834; /* the start and the bike pickup */
-  --accent-ink: #a8431a; /* accent for text: 4.5:1 on paper */
-  --dot: #b9b8b2; /* stations outside the trip */
-  --no-data: #c3c2b7;
-  --free-0: #86b6ef; /* < 50 % */
-  --free-1: #3987e5; /* 50–80 % */
-  --free-2: #1c5cab; /* 80–95 % */
-  --free-3: #0d366b; /* >= 95 % */
+  --start-and-pickup: #eb6834;
+  /* 4.5:1 on paper, for text. */
+  --start-and-pickup-text: #a8431a;
+  --station-outside-trip: #b9b8b2;
+  --station-no-forecast: #c3c2b7;
+  --route-line: #3987e5;
+  --free-less-than-50: #63bf75;
+  --free-50-to-80: #168f3d;
+  --free-80-to-95: #0e6b2e;
+  --free-95-or-more: #08431c;
   --error: #b42318;
   --font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --bar: 64px;
@@ -56,7 +61,7 @@ button {
 
 button:focus-visible,
 input:focus-visible {
-  outline: 2px solid var(--free-1);
+  outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 
@@ -99,7 +104,7 @@ input:focus-visible {
 }
 
 .topbar__status.is-old {
-  color: var(--accent);
+  color: var(--start-and-pickup);
 }
 
 .topbar__status.is-error {
@@ -206,7 +211,7 @@ input:focus-visible {
 }
 
 .end.is-on {
-  border-color: var(--ink);
+  border-color: var(--primary);
 }
 
 .end__text {
@@ -231,11 +236,24 @@ input:focus-visible {
 }
 
 .dot--start {
-  background: var(--accent);
+  background: var(--start-and-pickup);
 }
 
-.dot--goal {
-  border: 3px solid var(--ink);
+.end__pin {
+  display: grid;
+  flex: none;
+  color: var(--ink);
+}
+
+.end__pin svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* The pin is a marker over the map: it must not take the clicks for the stations under it. */
+.goal-pin {
+  pointer-events: none;
+  filter: drop-shadow(0 1px 2px rgba(11, 11, 11, 0.35));
 }
 
 .dock__context {
@@ -256,14 +274,15 @@ input:focus-visible {
   flex: none;
   padding: 8px 14px;
   border-radius: 999px;
-  background: var(--ink);
+  background: var(--primary);
   color: var(--paper);
   font-size: 0.85rem;
   font-weight: 600;
 }
 
 .pill:hover {
-  background: #2a2a28;
+  background: var(--primary-hover);
+  color: var(--ink);
 }
 
 /* Search bar: options · text · my location · search. */
@@ -283,7 +302,7 @@ input:focus-visible {
 }
 
 .ask:focus-within {
-  outline: 3px solid var(--soft);
+  outline: 3px solid var(--highlight-wash);
 }
 
 .ask__icon,
@@ -305,7 +324,7 @@ input:focus-visible {
 
 .ask__icon:hover,
 .ask__icon.is-on {
-  background: var(--soft);
+  background: var(--highlight-wash);
 }
 
 .ask__input {
@@ -338,16 +357,17 @@ input:focus-visible {
 
 .ask__locate:hover {
   color: var(--ink);
-  background: var(--soft);
+  background: var(--highlight-wash);
 }
 
 .ask__send {
-  background: var(--ink);
+  background: var(--primary);
   color: var(--paper);
 }
 
-.ask__send:hover {
-  background: #2a2a28;
+.ask__send:hover:not(:disabled) {
+  background: var(--primary-hover);
+  color: var(--ink);
 }
 
 .ask__send:disabled {
@@ -483,9 +503,15 @@ input:focus-visible {
 }
 
 .chip.is-on {
-  background: var(--ink);
-  border-color: var(--ink);
+  background: var(--primary);
+  border-color: var(--primary);
   color: var(--paper);
+}
+
+.chip.is-on:hover {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+  color: var(--ink);
 }
 
 /* Card: where to drop the bike, top left under the map credit. */
@@ -546,7 +572,7 @@ input:focus-visible {
 .card__warn {
   display: block;
   margin-bottom: 4px;
-  color: var(--accent-ink);
+  color: var(--start-and-pickup-text);
 }
 
 .code {
@@ -586,12 +612,18 @@ input:focus-visible {
 }
 
 .sort__btn.is-on {
-  background: var(--ink);
-  border-color: var(--ink);
+  background: var(--primary);
+  border-color: var(--primary);
   color: var(--paper);
 }
 
-/* One row per station; rank 1 and 2 keep their badge and wash wherever the sort puts them. */
+.sort__btn.is-on:hover {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+  color: var(--ink);
+}
+
+/* One row per station. Rank 1 keeps its badge wherever the sort puts it. */
 .row {
   display: grid;
   grid-template-columns: 26px 1fr auto;
@@ -610,8 +642,8 @@ button.row:hover {
 /* The selected drop-off: the route on the map goes there. */
 .row.is-selected,
 button.row.is-selected:hover {
-  background: var(--soft);
-  box-shadow: inset 3px 0 0 var(--ink);
+  background: var(--highlight-wash);
+  box-shadow: inset 3px 0 0 var(--primary);
 }
 
 .row__route {
@@ -635,8 +667,8 @@ button.row.is-selected:hover {
 }
 
 .row.is-best .row__rank {
-  background: var(--free-2);
-  border-color: var(--free-2);
+  background: var(--primary);
+  border-color: var(--primary);
   color: var(--paper);
 }
 
@@ -648,7 +680,7 @@ button.row.is-selected:hover {
   margin-left: 6px;
   padding: 1px 6px;
   border-radius: 999px;
-  background: var(--free-2);
+  background: var(--primary);
   color: var(--paper);
   font-size: 0.68rem;
   font-weight: 700;
@@ -741,19 +773,19 @@ button.row.is-selected:hover {
 }
 
 .swatch--0 {
-  background: var(--free-0);
+  background: var(--free-less-than-50);
 }
 .swatch--1 {
-  background: var(--free-1);
+  background: var(--free-50-to-80);
 }
 .swatch--2 {
-  background: var(--free-2);
+  background: var(--free-80-to-95);
 }
 .swatch--3 {
-  background: var(--free-3);
+  background: var(--free-95-or-more);
 }
 .swatch--none {
-  background: var(--no-data);
+  background: var(--station-no-forecast);
 }
 
 .maplibregl-popup-content {
