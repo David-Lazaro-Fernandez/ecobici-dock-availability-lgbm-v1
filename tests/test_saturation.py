@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-import pandas as pd
+import polars as pl
 import pytest
 
 from ecobici.eval import saturation
@@ -35,7 +35,7 @@ def con(tmp_path):
     for i, full in enumerate([{"A", "B"}, {"A", "B"}, {"A"}, {"A"}]):
         rows += snapshot(T0 + timedelta(minutes=15 * i), full)
     path = tmp_path / "2025-03.parquet"
-    pd.DataFrame(rows).to_parquet(path)
+    pl.DataFrame(rows).write_parquet(path)
     return saturation.connect([path])
 
 
@@ -43,14 +43,33 @@ def test_v1_peak_counts(con):
     r = saturation.v1(con)
     assert r["overall_full_rate"] == pytest.approx(6 / 12)
     assert r["peak_stations"] == 3
-    assert r["peak_ge_50"] == 2  # A (100%) and B (50%)
+    # A (100%) and B (50%).
+    assert r["peak_ge_50"] == 2
     assert r["peak_top"][0][0] == "CE-A"
 
 
 def test_v6_only_walkable_neighbours_count(con):
     r = saturation.v6(con)
-    assert r["stations_with_neighbour"] == 2  # A and B; C is too far
+    # A and B; C is too far.
+    assert r["stations_with_neighbour"] == 2
     # Given A full (4 readings), B was full in 2; given B full (2), A was full in 2.
     assert r["p_b_full_given_a"] == pytest.approx(4 / 6)
     assert r["p_all_neighbours_full"] == pytest.approx(4 / 6)
     assert "V6" in saturation.format_report(saturation.v1(con), r)
+
+
+def test_demand_weighted_weights_slots_by_typical_arrivals(con):
+    # Peak readings at 09:00/15/30/45 → slots 36..39. A full in all; B full at 36-37.
+    flow = pl.DataFrame(
+        {
+            "station_id": ["A", "B", "C"],
+            "slot": [36, 36, 36],
+            "weekend": [False, False, False],
+            "arrivals_mean": [3.0, 1.0, 4.0],
+        }
+    )
+    r = saturation.demand_weighted(con, flow)
+    assert r["weekday_peak"] == pytest.approx((3 * 1 + 1 * 1 + 4 * 0) / 8)
+    # Time-weighted over every peak slot: A 4/4, B 2/4, C 0/4.
+    assert r["weekday_peak_time_weighted"] == pytest.approx(6 / 12)
+    assert r["stations"] == 3

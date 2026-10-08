@@ -4,6 +4,8 @@ ML model to predict whether you will end your ride and find parking at your dest
 
 - Product requirements: [`docs/PRD.md`](docs/PRD.md)
 - Engineering plan, review findings and decisions: [`docs/ENG_PLAN.md`](docs/ENG_PLAN.md)
+- How the model was built, justified and tested: [`docs/modeling.md`](docs/modeling.md)
+- Stage reports (M2–M6): [`docs/reports/`](docs/reports/)
 
 ## Setup
 
@@ -34,7 +36,7 @@ A Streamlit page to look at the live feed or local captures. It shows a map colo
 label, a filterable table, and one station's docks and bikes over time.
 
 ```sh
-aws s3 sync s3://YOUR-BUCKET/raw raw     # optional: pull captures from the collector
+uv run python -m ecobici.ingest.captures download   # optional: pull captures (bucket from S3_BUCKET_NAME)
 uv run streamlit run apps/station_viewer.py --server.address localhost
 ```
 

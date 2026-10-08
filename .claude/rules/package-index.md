@@ -15,3 +15,10 @@ Socket Registry Firewall.
   PyPI. If it was already pushed, rewrite the affected commits.
 - With `pip` directly, pass `--index-url https://pypi.org/simple`; the user-level
   `pip.conf` would otherwise send it to shadowbox.
+
+## npm (web/): always npmjs
+
+- `web/.npmrc` pins `https://registry.npmjs.org/`. It takes precedence over the user-level
+  npm config, which points to shadowbox. Keep it; run npm from `web/`.
+- Every `"resolved"` URL in `web/package-lock.json` must be on `registry.npmjs.org`.
+  `tests/test_package_index.py` enforces this.

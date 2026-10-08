@@ -3,6 +3,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import polars as pl
 import pytest
 from conftest import station, status_payload
 
@@ -68,17 +69,23 @@ def raw(tmp_path):
 
 def test_snapshot_frame_merges_and_labels(raw):
     status = data.read_capture(data.list_captures(raw)[-1])
-    df = data.snapshot_frame(data.latest_information(raw), status)
-    assert list(df["label"]) == ["full", "unavailable"]
-    assert df.loc[0, "capacity"] == 39
-    assert df.loc[0, "minutes_since_report"] == 0
+    snap = data.snapshot_frame(data.latest_information(raw), status)
+    df = snap.stations
+    assert df["label"].to_list() == ["full", "unavailable"]
+    assert df["capacity"][0] == 39
+    assert df["minutes_since_report"][0] == 0
+    assert snap.feed_updated == int((T0 + timedelta(minutes=4)).timestamp())
 
 
 def test_station_history_follows_one_station(raw):
     hist = data.station_history(data.list_captures(raw), "1")
-    assert list(hist["docks_available"]) == [3, 1, 0]
-    assert list(hist["label"]) == ["available", "available", "full"]
-    assert str(hist["time"].iloc[0].tzinfo) == "America/Mexico_City"
+    assert hist["docks_available"].to_list() == [3, 1, 0]
+    assert hist["label"].to_list() == ["available", "available", "full"]
+    assert hist.schema["time"] == pl.Datetime("us", "America/Mexico_City")
+
+
+def test_station_history_unknown_station_is_empty(raw):
+    assert data.station_history(data.list_captures(raw), "999").is_empty()
 
 
 def test_latest_information_missing(tmp_path):
@@ -89,7 +96,8 @@ def test_app_renders_local_captures(raw):
     from streamlit.testing.v1 import AppTest
 
     at = AppTest.from_file(str(APP), default_timeout=30)
-    at.run()  # first run uses the live feed; switch to local before asserting
+    # First run uses the live feed; switch to local before asserting.
+    at.run()
     at.sidebar.radio[0].set_value("Local captures").run()
     at.sidebar.text_input[0].set_value(str(raw)).run()
     assert not at.exception

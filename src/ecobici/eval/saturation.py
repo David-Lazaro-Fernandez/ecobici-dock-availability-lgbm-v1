@@ -14,7 +14,8 @@ import duckdb
 from ecobici import config
 from ecobici.ingest import maxhalford
 
-PEAK_START_MIN = 8 * 60 + 30  # weekday morning arrival window, local time
+# Weekday morning arrival window, local time.
+PEAK_START_MIN = 8 * 60 + 30
 PEAK_END_MIN = 10 * 60 + 30
 
 
@@ -162,6 +163,52 @@ def format_report(r1: dict, r6: dict) -> str:
     return "\n".join(lines)
 
 
+def demand_weighted(con: duckdb.DuckDBPyConnection, flow) -> dict:
+    """Full rate as experienced by arriving riders.
+
+    Joining each recorded trip to its station's state would undercount saturation: a
+    recorded arrival means the station *did* have a dock (trips only log satisfied
+    demand). Instead, weight each station × slot × day-type full rate by the typical
+    arrival demand there (``arrivals_mean`` from ``features.trips.net_flow``). Demand at
+    full stations is itself undercounted, so this is still a lower bound, but a much
+    closer one than the time-weighted rate.
+
+    ``flow`` is a polars frame with station_id, slot, weekend, arrivals_mean.
+    """
+    con.register("flow", flow.to_arrow())
+    con.execute(
+        """
+        CREATE OR REPLACE TABLE slot_full AS
+        SELECT sid, weekend, minute_of_day // 15 AS slot, avg(is_full::int) AS f
+        FROM r WHERE ok GROUP BY ALL
+        """
+    )
+    row = con.execute(
+        """
+        WITH j AS (
+            SELECT s.sid, s.weekend, s.slot, s.f, fl.arrivals_mean AS w
+            FROM slot_full s
+            JOIN flow fl ON fl.station_id = s.sid AND fl.slot = s.slot
+                        AND fl.weekend = s.weekend
+        )
+        SELECT sum(f * w) / sum(w),
+               sum(f * w) FILTER (WHERE NOT weekend AND slot BETWEEN $lo AND $hi)
+                 / sum(w) FILTER (WHERE NOT weekend AND slot BETWEEN $lo AND $hi),
+               (SELECT avg(f) FROM slot_full
+                WHERE NOT weekend AND slot BETWEEN $lo AND $hi),
+               count(DISTINCT sid)
+        FROM j
+        """,
+        {"lo": PEAK_START_MIN // 15, "hi": PEAK_END_MIN // 15 - 1},
+    ).fetchone()
+    return {
+        "overall": row[0],
+        "weekday_peak": row[1],
+        "weekday_peak_time_weighted": row[2],
+        "stations": row[3],
+    }
+
+
 def healthy_files(root: Path) -> list[Path]:
     return [
         root / f"{r['month']}.parquet" for r in maxhalford.month_diagnostics(root) if r["healthy"]
@@ -171,9 +218,35 @@ def healthy_files(root: Path) -> list[Path]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dir", type=Path, default=maxhalford.DEFAULT_DIR)
+    parser.add_argument(
+        "--trips", type=Path, help="Trips parquet dir: adds the demand-weighted full rate"
+    )
+    parser.add_argument("--raw", type=Path, default=Path("raw"), help="Local GBFS captures")
     args = parser.parse_args(argv)
-    con = connect(healthy_files(args.dir))
+    files = healthy_files(args.dir)
+    con = connect(files)
     print(format_report(v1(con), v6(con)))
+    if args.trips:
+        from datetime import datetime
+
+        from ecobici.devtools.stations import fetch_live, latest_information
+        from ecobici.features import trips as trip_features
+        from ecobici.ingest.trips import station_code_map
+
+        info = latest_information(args.raw) or fetch_live(config.STATION_INFORMATION_URL)
+        # Epoch seconds: returning TIMESTAMPTZ to Python would need pytz.
+        lo, hi = con.execute("SELECT epoch(min(t)), epoch(max(t)) FROM r").fetchone()
+        start = datetime.fromtimestamp(lo, config.LOCAL_TZ).replace(hour=0, minute=0, second=0)
+        end = datetime.fromtimestamp(hi, config.LOCAL_TZ)
+        loaded = trip_features.load(start, end, station_code_map(info), args.trips)
+        dw = demand_weighted(con, trip_features.net_flow(loaded))
+        print(
+            "\n## Demand-weighted full rate (lower bound)\n"
+            f"- All slots: {100 * dw['overall']:.1f}%\n"
+            f"- Weekday 08:30–10:30: {100 * dw['weekday_peak']:.1f}% demand-weighted vs "
+            f"{100 * dw['weekday_peak_time_weighted']:.1f}% time-weighted "
+            f"({dw['stations']} stations)"
+        )
     return 0
 
 

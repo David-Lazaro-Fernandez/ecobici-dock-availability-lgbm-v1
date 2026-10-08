@@ -13,8 +13,10 @@ LOCAL_TZ = ZoneInfo("America/Mexico_City")
 # Own capture cadence (ENG_PLAN finding 3).
 CAPTURE_INTERVAL_SECONDS = 120
 
-# A reading whose last_reported is older than this gets no label (finding 1).
-STALE_AFTER_SECONDS = 30 * 60
+# A reading whose last_reported is older than this gets no label and is not recommended
+# (finding 1). Stations report only when they change, so a quiet station is silent for
+# 30-60 min routinely; 3 h is provisional until a week of capture shows quiet spells.
+STALE_AFTER_SECONDS = 3 * 60 * 60
 
 # Horizons (minutes): MaxHalford supports the coarse ones, own capture all of them.
 HORIZONS_MAXHALFORD_MIN = (15, 30, 45)

@@ -64,6 +64,30 @@ Healthy months (>= 80% covered): 16, 430 covered days
 
 Se dejan 2025-07 y de 2026-02 a 2026-08 fuera de todos los bloques.
 
+## 2026-09 en detalle (2026-10-06)
+
+Paso 4 de [`next_steps.md`](../next_steps.md). Solo se leyeron las **marcas de tiempo** de los snapshots, sin estados de estación ni etiquetas, así que el mes sigue sin usarse para evaluar.
+
+**Los 72 huecos están todos antes del 11.** Del 1 al 10 de septiembre siguen las 6–9 lecturas diarias del scraper degradado (2026-02 → 08). Desde el **11 a las 04:13** (hora local) el feed es continuo: 120 lecturas por día, ningún hueco de más de 36 min hasta un hueco de 7.4 h la madrugada del 30 (01:13–08:37).
+
+**Desde el 11, la cadencia es otra: 12.0 min fijos** (p5–p95: 11.2–12.9), contra ~15.5 min con mucha variación (11–25) en los meses sanos. Eso cambia qué lectura toman las reglas del pipeline (rezago: la última lectura ≤ *t* − L, si no tiene más de L + 7.5 min; etiqueta: la primera ≥ *t* + h − 7.5 min, si llega antes de *t* + h + 7.5):
+
+| Periodo | Cadencia (mediana) | Rezago 15 | Rezago 30 | Rezago 60 | Etiqueta 15 / 30 / 45 | Desfase de la etiqueta 15 / 30 / 45 (mediana) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2024-09 → 2026-01 (meses sanos) | 15.3–15.9 min | 44–47 % | 40–47 % | 44–49 % | 82–96 % | ≈ 0 / −0.5 / −1 min |
+| 2026-09, del 1 al 10 | 125 min | 16 % | 19 % | 14 % | 35 % | — |
+| **2026-09, desde el 11** | **12.0 min** | **1 %** | **98 %** | 50 % | 99 % | **−3 / −6 / +3 min** |
+
+- **Etiqueta:** con lecturas cada 12 min, la llegada a 15 y 30 min se lee 3 y 6 min antes, y la de 45, 3 min después. Las predicciones a 15 y 30 min se vuelven algo más fáciles para todos los modelos, y la de 45 algo más difícil. El BSS compara sobre las mismas filas y lo compensa en parte, pero **el Brier absoluto no se puede comparar con 2026-01**.
+- **Rezagos:** `docks_lag15` falta casi siempre y `docks_lag30` casi nunca. Cada patrón por sí solo aparece en entrenamiento, donde faltan ~55 % de las veces, pero la combinación es distinta. `docks_lag15` pesa ~2 % de la ganancia.
+- **Hallazgo aparte:** en los meses sanos, cada rezago falta ~55 % de las veces, porque la ventana [*t* − L − 7.5, *t* − L] mide la mitad de la cadencia. Una ventana centrada (± 7.5 min) los recupera casi todos, pero casi no mejora el modelo ([M6](M6_lgbm.md#experimento-rezagos-con-ventana-centrada-2026-10-07)).
+
+**Decisión:**
+- **2026-09 cuenta solo desde el 11** (`splits.TEST_FROM`, 00:00 hora local, con días completos para el bootstrap por días). Del 1 al 10 se excluye, como 2026-02 → 08. No se filtran huecos sueltos: el filtro por ejemplo (lectura a ≤ 7.5 min de *t* + h) ya los quita.
+- **Se reporta aparte de 2026-01**, con su propio IC. **2026-01 es la prueba principal**, ~20 días hábiles con la misma cadencia que entrenamiento. 2026-09 da ~14 días hábiles (el 16 es feriado) y es la única prueba en temporada de lluvias.
+- **No se corrige el desfase.** Con lecturas sincronizadas cada 12 min no hay ninguna a 15 o 30 min de *t*. Remuestrear inventaría lecturas.
+- **La recalibración semanal del subgrupo** usa el Platt fijo hasta juntar 5,000 filas (~1.5 semanas de picos), así que en 2026-09 se aplica sobre todo el Platt fijo.
+
 ## Open-Meteo (pronóstico histórico)
 
 - Punto: (19.41, −99.17). El centroide real de las estaciones es (19.408, −99.168), y el área de servicio mide unos 14 × 9 km, del tamaño de una celda del modelo.

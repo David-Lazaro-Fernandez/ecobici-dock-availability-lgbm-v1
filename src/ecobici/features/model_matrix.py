@@ -1,0 +1,285 @@
+"""M6 feature matrix, built in DuckDB on top of ``snap`` and ``ex_{h}``.
+
+Every feature uses only what is known at prediction time t (or, for weather, the
+forecast for the next hour, which Open-Meteo serves at t too). Historical profiles
+(trip flows, station rates) are fitted on train months only and joined onto every
+split, so validation and test never inform them.
+"""
+
+from datetime import date
+
+import duckdb
+import polars as pl
+
+from ecobici.calendar import HOLIDAYS
+from ecobici.eval.splits import TRAIN
+
+# PRD: neighbour occupancy "a unos 300 m".
+NEIGHBOUR_RADIUS_M = 300
+LAGS_MIN = (15, 30, 60)
+LAG_TOLERANCE_MIN = 7.5
+# The reading for "L min ago":
+# - trailing (the frozen M6 model): the last reading at or before t − L, if it is not older
+#   than t − L − 7.5 min. At the ~15-min cadence, ~55 % of lags are missing.
+# - centered: the reading nearest to t − L, within ± 7.5 min. Never t itself.
+LAG_WINDOWS = ("trailing", "centered")
+
+
+def features(lags: tuple[int, ...] = LAGS_MIN) -> list[str]:
+    """Model inputs for a set of lags (minutes). The default is the M6 set."""
+    return [
+        # station identity and size
+        "station",
+        "capacity",
+        # state now
+        "docks_now",
+        "bikes_now",
+        "docks_disabled",
+        "occupancy_now",
+        # recent trend
+        *[f"docks_lag{lag}" for lag in lags],
+        *[f"docks_delta{lag}" for lag in lags],
+        *[f"full_lag{lag}" for lag in lags],
+        # neighbours at t
+        "nb_n",
+        "nb_full_frac",
+        "nb_occupancy_mean",
+        "nb_docks_sum",
+        # calendar
+        "minute_of_day",
+        "target_slot",
+        "weekday",
+        "weekend",
+        "holiday",
+        # weather
+        "precip_now",
+        "precip_next_hour",
+        "temperature_now",
+        # historical trip flow (train window)
+        "flow_arrivals_target",
+        "flow_departures_target",
+        "flow_net_target",
+        "flow_net_window",
+        # historical station profile (train window)
+        "st_full_rate",
+        "st_peak_full_rate",
+    ]
+
+
+FEATURES = features()
+CATEGORICAL = ["station"]
+
+
+def prepare_shared(
+    con: duckdb.DuckDBPyConnection,
+    flow: pl.DataFrame,
+    weather: pl.DataFrame,
+    station_files: tuple[str, ...] | None = None,
+    stations: pl.DataFrame | None = None,
+    st_profile: pl.DataFrame | None = None,
+) -> None:
+    """Per-snapshot neighbour state, weather, flows, station profiles and holidays.
+
+    The station list (codes, coordinates, neighbours) comes from all loaded snapshots, or
+    only from the ``station_files`` file months. Pin it to the training files: more
+    months must not change the station codes of a trained model. Stations outside the
+    list get no features.
+
+    ``stations`` and ``st_profile``: the same tables, computed before (``ecobici.bundle``).
+    With them, ``snap`` needs only the recent readings.
+    """
+    con.register("flow_src", flow.to_arrow())
+    con.register("weather_src", weather.to_arrow())
+    con.register(
+        "holiday_src", pl.DataFrame({"d": sorted(HOLIDAYS)}, schema={"d": pl.Date}).to_arrow()
+    )
+    con.execute("CREATE OR REPLACE TABLE flow AS SELECT * FROM flow_src")
+    # Net flow summed over the slots *before* each slot, on a full 96-slot grid, so the
+    # expected net arrivals between now and arrival are two lookups, not a range join.
+    con.execute(
+        """
+        CREATE OR REPLACE TABLE flow_cum AS
+        WITH grid AS (
+            SELECT k.station_id, k.weekend, s.slot
+            FROM (SELECT DISTINCT station_id, weekend FROM flow) k,
+                 range(96) s(slot)
+        )
+        SELECT g.station_id, g.weekend, g.slot,
+               coalesce(sum(coalesce(f.net_flow_mean, 0)) OVER (
+                   PARTITION BY g.station_id, g.weekend ORDER BY g.slot
+                   ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS cum_before,
+               sum(coalesce(f.net_flow_mean, 0)) OVER (
+                   PARTITION BY g.station_id, g.weekend) AS day_total
+        FROM grid g
+        LEFT JOIN flow f ON f.station_id = g.station_id AND f.weekend = g.weekend
+                        AND f.slot = g.slot
+        """
+    )
+    con.execute("CREATE OR REPLACE TABLE holidays AS SELECT d FROM holiday_src")
+    con.execute(
+        """
+        CREATE OR REPLACE TABLE weather AS
+        SELECT time_utc AS hour, precipitation AS precip, temperature_2m AS temp
+        FROM weather_src
+        """
+    )
+    if stations is not None:
+        con.register("stations_src", stations.to_arrow())
+        con.execute("CREATE OR REPLACE TABLE stations AS SELECT * FROM stations_src")
+    else:
+        con.execute(
+            """
+            CREATE OR REPLACE TABLE stations AS
+            SELECT sid, avg(lat) AS lat, avg(lon) AS lon,
+                   row_number() OVER (ORDER BY sid) - 1 AS station
+            FROM snap WHERE ? IS NULL OR file_month IN (SELECT unnest(?))
+            GROUP BY sid
+            """,
+            [station_files and list(station_files)] * 2,
+        )
+    con.execute(
+        """
+        CREATE OR REPLACE TABLE nb AS
+        SELECT a.sid AS a, b.sid AS b FROM stations a JOIN stations b ON a.sid <> b.sid
+        WHERE 2 * 6371000 * asin(sqrt(
+                  pow(sin(radians(b.lat - a.lat) / 2), 2)
+                  + cos(radians(a.lat)) * cos(radians(b.lat))
+                    * pow(sin(radians(b.lon - a.lon) / 2), 2))) <= ?
+        """,
+        [NEIGHBOUR_RADIUS_M],
+    )
+    # Snapshots are global commits, so neighbours share the exact timestamp.
+    con.execute(
+        """
+        CREATE OR REPLACE TABLE nbf AS
+        SELECT nb.a AS sid, s.t,
+               count(*) AS nb_n,
+               avg((s.ok AND s.is_full)::int) AS nb_full_frac,
+               avg(1 - s.docks / nullif(s.capacity, 0)) AS nb_occupancy_mean,
+               sum(s.docks) AS nb_docks_sum
+        FROM nb JOIN snap s ON s.sid = nb.b
+        GROUP BY ALL
+        """
+    )
+    if st_profile is not None:
+        con.register("st_profile_src", st_profile.to_arrow())
+        con.execute("CREATE OR REPLACE TABLE st_profile AS SELECT * FROM st_profile_src")
+    else:
+        con.execute(
+            """
+            CREATE OR REPLACE TABLE st_profile AS
+            SELECT sid,
+                   avg(is_full::int) FILTER (WHERE ok) AS st_full_rate,
+                   avg(is_full::int) FILTER (
+                       WHERE ok AND isodow(t) < 6
+                         AND extract(hour FROM t) * 60 + extract(minute FROM t)
+                             BETWEEN 510 AND 630) AS st_peak_full_rate
+            FROM snap WHERE month IN (SELECT unnest(?))
+            GROUP BY sid
+            """,
+            [list(TRAIN)],
+        )
+
+
+def _lag_sql(
+    lag: int, window: str, tolerance_min: float = LAG_TOLERANCE_MIN
+) -> tuple[list[str], str, str, str]:
+    """(joins, ok condition, docks expr, is_full expr) for the reading 'lag' min ago."""
+    tol = int(tolerance_min * 60)
+    target = f"e.t - INTERVAL ({lag * 60}) SECOND"
+    p = f"l{lag}"
+    before = f"ASOF LEFT JOIN snap {p} ON {p}.sid = e.sid AND {p}.t <= {target}"
+    p_ok = f"({p}.t >= {target} - INTERVAL ({tol}) SECOND AND {p}.ok)"
+    if window == "trailing":
+        return [before], p_ok, f"{p}.docks", f"{p}.is_full"
+    n = f"n{lag}"
+    after = f"ASOF LEFT JOIN snap {n} ON {n}.sid = e.sid AND {n}.t >= {target}"
+    n_ok = f"({n}.t <= {target} + INTERVAL ({tol}) SECOND AND {n}.ok)"
+    # Use the nearer reading. If equal, use the earlier one.
+    use_p = f"({p_ok} AND (NOT coalesce({n_ok}, false) OR {target} - {p}.t <= {n}.t - ({target})))"
+    ok = f"(coalesce({p_ok}, false) OR coalesce({n_ok}, false))"
+
+    def pick(col: str) -> str:
+        return f"CASE WHEN {use_p} THEN {p}.{col} ELSE {n}.{col} END"
+
+    return [before, after], ok, pick("docks"), pick("is_full")
+
+
+def build(
+    con: duckdb.DuckDBPyConnection,
+    horizon_min: int,
+    source: str | None = None,
+    lag_window: str = "trailing",
+    lags: tuple[int, ...] = LAGS_MIN,
+    lag_tolerance_min: float = LAG_TOLERANCE_MIN,
+    out: str | None = None,
+) -> str:
+    """Create ``out`` (default ``feat_{h}``): the ``source`` columns (default ``ex_{h}``)
+    plus ``features(lags)``. Return its name.
+
+    ``lag_window`` (LAG_WINDOWS) and ``lag_tolerance_min`` set how a lagged reading is
+    matched. The defaults are for the ~15-min MaxHalford readings. The 2-min captures
+    allow short lags with a small tolerance."""
+    if lag_window not in LAG_WINDOWS:
+        raise ValueError(f"lag_window must be one of {LAG_WINDOWS}")
+    ex, out = source or f"ex_{horizon_min}", out or f"feat_{horizon_min}"
+    lag_joins, lag_cols = [], []
+    for lag in lags:
+        joins, ok, docks, full = _lag_sql(lag, lag_window, lag_tolerance_min)
+        lag_joins += joins
+        lag_cols += [
+            f"CASE WHEN {ok} THEN {docks} END AS docks_lag{lag}",
+            f"CASE WHEN {ok} THEN e.docks_now - {docks} END AS docks_delta{lag}",
+            f"CASE WHEN {ok} THEN {full}::int END AS full_lag{lag}",
+        ]
+    con.execute(
+        f"""
+        CREATE OR REPLACE TABLE {out} AS
+        SELECT e.*,
+               st.station,
+               cur.bikes AS bikes_now,
+               cur.docks_disabled,
+               1 - e.docks_now / nullif(e.capacity, 0) AS occupancy_now,
+               {", ".join(lag_cols)},
+               coalesce(nbf.nb_n, 0) AS nb_n,
+               nbf.nb_full_frac, nbf.nb_occupancy_mean, nbf.nb_docks_sum,
+               extract(hour FROM e.t) * 60 + extract(minute FROM e.t) AS minute_of_day,
+               isodow(e.t + INTERVAL ({horizon_min}) MINUTE) AS weekday,
+               (CAST(e.t + INTERVAL ({horizon_min}) MINUTE AS DATE) IN (SELECT d FROM holidays))
+                   AS holiday,
+               w0.precip AS precip_now, w1.precip AS precip_next_hour, w0.temp AS temperature_now,
+               ft.arrivals_mean AS flow_arrivals_target,
+               ft.departures_mean AS flow_departures_target,
+               ft.net_flow_mean AS flow_net_target,
+               coalesce(CASE WHEN e.target_slot >= e.slot
+                             THEN c1.cum_before - c0.cum_before
+                             ELSE c0.day_total - c0.cum_before + c1.cum_before END, 0)
+                   AS flow_net_window,
+               sp.st_full_rate, sp.st_peak_full_rate
+        FROM {ex} e
+        JOIN stations st ON st.sid = e.sid
+        JOIN snap cur ON cur.sid = e.sid AND cur.t = e.t
+        {" ".join(lag_joins)}
+        LEFT JOIN nbf ON nbf.sid = e.sid AND nbf.t = e.t
+        LEFT JOIN weather w0 ON w0.hour = date_trunc('hour', e.t)
+        LEFT JOIN weather w1 ON w1.hour = date_trunc('hour', e.t) + INTERVAL 1 HOUR
+        LEFT JOIN flow ft ON ft.station_id = e.sid AND ft.slot = e.target_slot
+                         AND ft.weekend = e.weekend
+        -- Expected net arrivals from now until arrival: slots [slot, target_slot),
+        -- wrapping past midnight.
+        LEFT JOIN flow_cum c0 ON c0.station_id = e.sid AND c0.weekend = e.weekend
+                             AND c0.slot = e.slot
+        LEFT JOIN flow_cum c1 ON c1.station_id = e.sid AND c1.weekend = e.weekend
+                             AND c1.slot = e.target_slot
+        LEFT JOIN st_profile sp ON sp.sid = e.sid
+        """
+    )
+    return out
+
+
+def flow_window() -> tuple[date, date]:
+    """Trip-flow fitting window: the train months, [first day, day after last month)."""
+    first, last = TRAIN[0], TRAIN[-1]
+    y, m = map(int, last.split("-"))
+    end = date(y + (m == 12), m % 12 + 1, 1)
+    return date.fromisoformat(f"{first}-01"), end

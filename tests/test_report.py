@@ -44,3 +44,35 @@ def test_report_skips_unreadable_files(tmp_path):
 
 def test_empty_report(tmp_path):
     assert format_report(build_report(tmp_path)) == "No captures found."
+
+
+def test_report_buckets_silence_of_in_service_stations(tmp_path):
+    lu = int(T0.timestamp())
+    stations = [
+        station("1", last_reported=lu),
+        station("2", last_reported=lu - 45 * 60),
+        station("3", last_reported=lu - 5 * 3600),
+        station("4", returning=0, last_reported=lu - 99 * 86400),
+    ]
+    write(tmp_path, T0, lu, stations)
+
+    rep = build_report(tmp_path)
+
+    assert rep.silence == {"< 30 min": 1, "30-60 min": 1, "3-24 h": 1}
+    assert rep.labels == {"available": 2, "stale": 1, "unavailable": 1}
+    assert "30-60 min" in format_report(rep)
+
+
+def test_morning_coverage_counts_weekday_mornings_inside_the_window():
+    from ecobici.collector.report import morning_coverage
+
+    # Wed 2026-10-07, 06:00–12:00 CDMX (12:00–18:00 UTC) every 2 min, minus 3 captures at
+    # 08:00, 08:02 and 08:04 local.
+    start = datetime(2026, 10, 7, 12, 0, tzinfo=UTC)
+    times = [start + timedelta(minutes=2 * i) for i in range(181)]
+    hole = {datetime(2026, 10, 7, 14, m, tzinfo=UTC) for m in (0, 2, 4)}
+    times = [t for t in times if t not in hole]
+    got = morning_coverage(times, 120)
+    assert list(got.values()) == [(117, 120)]
+    # A window that starts after 07:00 does not hold a whole morning.
+    assert morning_coverage([t for t in times if t.hour >= 14], 120) == {}
