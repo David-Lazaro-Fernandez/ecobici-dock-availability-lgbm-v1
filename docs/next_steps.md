@@ -79,6 +79,13 @@ El horizonte es cuánto tiempo hacia adelante predice el modelo: del momento en 
 - **Instancia:** 2 GB alcanzan para la API sola; 4 GB dan margen para API + OSRM. La t3.micro de 1 GB queda para el collector.
 - **Tiempos de bici:** la velocidad real es 11.4 km/h de mediana (130 mil pares de estaciones), así que los 12 km/h supuestos están bien. Un par con un tiempo histórico muy rápido (259 → 068, 18 km/h) puede ganar a una estación más cercana al destino. El OSRM propio servirá para contrastarlo.
 
+### Feedback de usuarios (2026-10-07)
+
+- **Dos preguntas anónimas en la web.** Bajo el plan: "¿Te sirvió esta recomendación?" (👍/👎 y una razón). Después de la hora de llegada, si la persona vuelve a la página: "¿Encontraste lugar en X?" (Sí / No / No hice el viaje) y "¿Había bici en Y?". La segunda pregunta aparece hasta 12 h después de la llegada.
+- **Qué se guarda:** id del plan (aleatorio), estaciones, hora de la captura, hora de llegada, probabilidades mostradas y la respuesta. No se guardan coordenadas, direcciones ni IP.
+- **Dónde:** `POST /v1/feedback` escribe un archivo por respuesta en `ECOBICI_FEEDBACK_SINK`: `data/feedback` en local; en el servidor, `s3://<bucket>/feedback`. El rol IAM de la API necesita `s3:PutObject` en `feedback/*`. Límite: 30 respuestas por hora por cliente.
+- **Pendiente:** cruzar las respuestas de viaje con las capturas cuando haya datos suficientes.
+
 ### Probado y descartado
 
 - **Rezagos con ventana centrada** (2026-10-07). Recupera casi todos los rezagos (de ~47 % a ~95 %), pero en VAL_REPORT el BSS cambia ≤ 0.003 y la calibración no cambia. El modelo congelado sigue con `trailing`. Ver [M6](reports/M6_lgbm.md#experimento-rezagos-con-ventana-centrada-2026-10-07).

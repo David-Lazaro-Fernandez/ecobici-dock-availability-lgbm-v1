@@ -1,10 +1,15 @@
-from datetime import UTC, datetime
+import gzip
+import json
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import polars as pl
 import pytest
 from fastapi.testclient import TestClient
 
 from ecobici.api import make_app
+from ecobici.collector.sinks import LocalSink
+from ecobici.feedback import RateLimit
 from ecobici.serve import Live, LiveService
 
 T0 = datetime(2026, 10, 7, 15, 0, tzinfo=UTC)
@@ -167,3 +172,95 @@ def test_the_pickup_weighs_the_chance_of_finding_no_bike():
     assert opts["O"]["p_empty_at_arrival"] > 0 and opts["N"]["p_empty_at_arrival"] == 0
     assert body["pickup"]["id"] == "N"
     assert body["pickup_options"][0]["id"] == "N"
+
+
+@pytest.fixture
+def sink(tmp_path):
+    return LocalSink(tmp_path)
+
+
+@pytest.fixture
+def fb_client(sink):
+    return TestClient(make_app(FakeService(), feedback_sink=sink))
+
+
+def answer(**over):
+    return {
+        "kind": "trip",
+        "plan_id": str(uuid4()),
+        "captured_at": datetime.now(UTC).isoformat(),
+        "pickup_id": "O",
+        "dropoff_id": "B",
+        "rank": 1,
+        "p_free": 0.9,
+        "found_dock": "yes",
+        "found_bike": "yes",
+    } | over
+
+
+def saved(sink) -> list[dict]:
+    return [json.loads(gzip.decompress(p.read_bytes())) for p in sink.root.rglob("*.json.gz")]
+
+
+def test_a_trip_answer_is_saved_without_the_client_address(fb_client, sink):
+    assert fb_client.post("/v1/feedback", json=answer()).status_code == 204
+    [record] = saved(sink)
+    assert record["found_dock"] == "yes" and record["dropoff_id"] == "B"
+    assert "received_at" in record
+    assert "testclient" not in json.dumps(record)
+
+
+def test_a_second_answer_to_the_same_question_replaces_the_first(fb_client, sink):
+    first = answer(found_dock="yes")
+    fb_client.post("/v1/feedback", json=first)
+    fb_client.post("/v1/feedback", json=first | {"found_dock": "no"})
+    rating = answer(
+        kind="rating", plan_id=first["plan_id"], useful=False, reason="far", comment="Lejos"
+    )
+    assert fb_client.post("/v1/feedback", json=rating).status_code == 204
+    by_kind = {r["kind"]: r for r in saved(sink)}
+    assert by_kind["trip"]["found_dock"] == "no"
+    assert by_kind["rating"]["reason"] == "far"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"dropoff_id": "nope"},
+        {"captured_at": (datetime.now(UTC) - timedelta(days=3)).isoformat()},
+        {"captured_at": "2026-10-07T12:00:00"},
+        {"p_free": 1.5},
+        {"found_dock": "maybe"},
+        {"kind": "rating", "useful": True, "comment": "x" * 281},
+        {"plan_id": "not-a-uuid"},
+    ],
+)
+def test_invalid_answers_are_rejected(fb_client, sink, bad):
+    assert fb_client.post("/v1/feedback", json=answer(**bad)).status_code == 422
+    assert saved(sink) == []
+
+
+def test_too_many_answers_from_one_client_are_refused(fb_client):
+    codes = [fb_client.post("/v1/feedback", json=answer()).status_code for _ in range(31)]
+    assert codes[:30] == [204] * 30 and codes[30] == 429
+
+
+def test_rate_limit_forgets_old_calls(monkeypatch):
+    clock = iter([0.0, 1.0, 2.0, 100.0])
+    monkeypatch.setattr("ecobici.feedback.time.monotonic", lambda: next(clock))
+    limit = RateLimit(2, 50)
+    assert [limit.allow("a") for _ in range(3)] == [True, True, False]
+    assert limit.allow("a")
+    assert list(limit.calls) == ["a"]
+
+
+def test_cors_allows_the_feedback_post(fb_client):
+    r = fb_client.options(
+        "/v1/feedback",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert r.status_code == 200

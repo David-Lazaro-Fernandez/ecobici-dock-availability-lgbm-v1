@@ -2,28 +2,36 @@
 
     uv run --extra api --extra model uvicorn ecobici.api:app --port 8000
 
-Interactive docs: http://localhost:8000/docs. GET only. CORS allows the origins in
-ECOBICI_API_ORIGINS (comma-separated; default: the Next dev server). The logic is in
+Interactive docs: http://localhost:8000/docs. GET, plus POST /v1/feedback (anonymous,
+see ``ecobici.feedback``). CORS allows the origins in ECOBICI_API_ORIGINS
+(comma-separated; default: the Next dev server). The logic is in
 ``ecobici.serve.LiveService``. This module only reads requests and writes responses.
 """
 
 import os
 import threading
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
-from typing import Annotated
+from datetime import UTC, datetime, timedelta
+from typing import Annotated, Literal
+from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from pydantic import BaseModel
+from pydantic import AwareDatetime, BaseModel, Field
 
+from ecobici import feedback as fb
+from ecobici.collector.sinks import Sink
 from ecobici.eval.baseline_report import HORIZONS
 from ecobici.serve import LiveService
 
 ORIGINS = os.environ.get("ECOBICI_API_ORIGINS", "http://localhost:3000").split(",")
 MAX_RADIUS_M = 1500
 MAX_FAILURE_MIN = 30
+FEEDBACK_PER_HOUR = 30
+# The trip question comes back for some hours after the arrival.
+FEEDBACK_MAX_AGE = timedelta(days=2)
+MAX_COMMENT = 280
 
 
 class Station(BaseModel):
@@ -90,6 +98,38 @@ class PlanResponse(BaseModel):
     candidates: list[Candidate]
 
 
+Probability = Annotated[float, Field(ge=0, le=1)]
+
+
+class Shown(BaseModel):
+    """The plan the person saw. The web app makes ``plan_id`` once per plan."""
+
+    plan_id: UUID
+    captured_at: AwareDatetime
+    pickup_id: str
+    dropoff_id: str
+    rank: int | None = None
+    arrive_at: AwareDatetime | None = None
+    p_free: Probability | None = None
+    p_empty_at_arrival: Probability | None = None
+
+
+class Rating(Shown):
+    kind: Literal["rating"]
+    useful: bool
+    reason: Literal["far", "wrong_time", "wrong_data", "other"] | None = None
+    comment: Annotated[str, Field(max_length=MAX_COMMENT)] | None = None
+
+
+class TripResult(Shown):
+    kind: Literal["trip"]
+    found_dock: Literal["yes", "no", "no_trip"]
+    found_bike: Literal["yes", "no"] | None = None
+
+
+Feedback = Annotated[Rating | TripResult, Field(discriminator="kind")]
+
+
 class Health(BaseModel):
     status: str
     captured_at: datetime | None
@@ -132,8 +172,10 @@ def station(row: dict) -> dict:
     }
 
 
-def make_app(service: LiveService | None = None) -> FastAPI:
+def make_app(service: LiveService | None = None, feedback_sink: Sink | None = None) -> FastAPI:
     svc = service or LiveService()
+    sink = feedback_sink or fb.default_sink()
+    limit = fb.RateLimit(FEEDBACK_PER_HOUR, 3600)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -144,7 +186,7 @@ def make_app(service: LiveService | None = None) -> FastAPI:
 
     app = FastAPI(title="Ecobici dock availability", lifespan=lifespan)
     app.add_middleware(
-        CORSMiddleware, allow_origins=ORIGINS, allow_methods=["GET"], allow_headers=["*"]
+        CORSMiddleware, allow_origins=ORIGINS, allow_methods=["GET", "POST"], allow_headers=["*"]
     )
     app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -214,6 +256,19 @@ def make_app(service: LiveService | None = None) -> FastAPI:
             requested=station(requested) if requested else None,
             candidates=candidates,
         )
+
+    @app.post("/v1/feedback", status_code=204)
+    def feedback(answer: Feedback, request: Request) -> None:
+        if not limit.allow(request.client.host if request.client else ""):
+            raise HTTPException(429, "too many answers; try later")
+        now = datetime.now(UTC)
+        if not now - FEEDBACK_MAX_AGE <= answer.captured_at <= now + timedelta(minutes=5):
+            raise HTTPException(422, "the plan is too old")
+        known = set(live_or_503().stations["station_id"].to_list())
+        if not {answer.pickup_id, answer.dropoff_id} <= known:
+            raise HTTPException(422, "unknown station")
+        record = answer.model_dump(mode="json") | {"received_at": now.isoformat()}
+        fb.write(sink, record, answer.captured_at)
 
     return app
 
