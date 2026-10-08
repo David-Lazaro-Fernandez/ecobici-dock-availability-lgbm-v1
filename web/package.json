@@ -9,7 +9,8 @@
     "prebuild": "node scripts/copy-worker.mjs",
     "build": "next build",
     "start": "next start",
-    "test": "node --experimental-strip-types --test 'lib/*.test.mjs'"
+    "test": "node --experimental-strip-types --test 'lib/*.test.mjs'",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "maplibre-gl": "^6.13.0",

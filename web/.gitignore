@@ -4,5 +4,7 @@ out/
 next-env.d.ts
 *.tsbuildinfo
 .env*.local
+test-results/
+playwright-report/
 # Copied from node_modules by scripts/copy-worker.mjs
 public/maplibre-gl-worker.mjs
