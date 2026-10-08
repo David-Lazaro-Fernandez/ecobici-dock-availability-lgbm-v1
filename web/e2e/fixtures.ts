@@ -25,11 +25,14 @@ const OUT_OF_SERVICE = 'Puebla-Mérida';
 const ORIGIN = { lat: 19.4206, lng: -99.1584 };
 const MINUTE = 60_000;
 
+export const codeOf = (index: number) => String(100 + index);
+
+// As in the API: the name starts with "CE-<code>", and the page drops that prefix.
 function station(index: number, name: string, overrides: Partial<Station> = {}): Station {
   return {
     id: `s${index}`,
-    code: `CE-${String(100 + index).padStart(3, '0')}`,
-    name,
+    code: codeOf(index),
+    name: `CE-${codeOf(index)} ${name}`,
     lat: ORIGIN.lat + index * 0.0009,
     lng: ORIGIN.lng + (index % 3) * 0.0011,
     capacity: 25,
