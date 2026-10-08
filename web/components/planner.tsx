@@ -12,7 +12,10 @@ import { type SortKey, sortCandidates } from '@/lib/sort';
 import { type Leg, useTripRoutes } from '@/lib/routes';
 import { FREE_LEGEND, pct } from '@/lib/format';
 import { FREE_STEPS } from '@/components/trip-map';
+import { RatePlan, TripCheck } from '@/components/feedback';
 import { Help } from '@/components/help';
+import type { Shown } from '@/lib/feedback';
+import { saveTrip } from '@/lib/trip';
 
 const TripMap = dynamic(() => import('@/components/trip-map'), { ssr: false });
 
@@ -205,6 +208,23 @@ export function Planner() {
   const searchKey = planParams ? String(planParams) : '';
   const dropoff = ranked.find((c) => picked?.searchKey === searchKey && c.id === picked.id) ?? ranked[0] ?? null;
   const legs = useTripRoutes(start, result?.pickup ?? null, dropoff, goal);
+  const planId = useMemo(() => (searchKey ? crypto.randomUUID() : ''), [searchKey]);
+  const shown: Shown | null =
+    result && dropoff
+      ? {
+          plan_id: planId,
+          captured_at: result.captured_at,
+          pickup_id: result.pickup.id,
+          dropoff_id: dropoff.id,
+          rank: dropoff.rank,
+          arrive_at: dropoff.arrive_at,
+          p_free: dropoff.p_free,
+          p_empty_at_arrival: result.pickup.p_empty_at_arrival,
+        }
+      : null;
+  useEffect(() => {
+    if (shown) saveTrip({ shown, pickupName: shortName(result!.pickup.name), dropoffName: shortName(dropoff!.name) });
+  }, [planId, shown?.captured_at, shown?.dropoff_id]);
   const selectDropoff = (id: string) => {
     if (ranked.some((c) => c.id === id)) setPicked({ searchKey, id });
   };
@@ -497,6 +517,7 @@ export function Planner() {
                     ))}
                   </div>
                 </div>
+                {shown && <RatePlan key={planId} shown={shown} />}
               </>
             )}
           </aside>
@@ -507,6 +528,7 @@ export function Planner() {
         {phone && menuBox}
         <div className="dock">
           {!phone && menuBox}
+          <TripCheck currentPlanId={planId} />
           {located && (
             <div className="dock__ends" role="group" aria-label="Viaje">
               <button type="button" className={`end ${editing === 'from' ? 'is-on' : ''}`} onClick={() => setEditing('from')}>

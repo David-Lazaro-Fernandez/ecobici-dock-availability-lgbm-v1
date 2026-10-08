@@ -77,6 +77,22 @@ export function Clock() {
   );
 }
 
+export function ThumbUp() {
+  return (
+    <svg {...base}>
+      <path d="M7 10.5v9H4.5v-9H7Zm0 0 3.5-7c1.4 0 2.5 1.1 2.5 2.5V9h5a2 2 0 0 1 2 2.3l-1.2 6.5a2 2 0 0 1-2 1.7H7" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function ThumbDown() {
+  return (
+    <svg {...base} style={{ transform: 'rotate(180deg)' }}>
+      <path d="M7 10.5v9H4.5v-9H7Zm0 0 3.5-7c1.4 0 2.5 1.1 2.5 2.5V9h5a2 2 0 0 1 2 2.3l-1.2 6.5a2 2 0 0 1-2 1.7H7" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function Help() {
   return (
     <svg {...base}>

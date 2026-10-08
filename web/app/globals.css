@@ -1038,6 +1038,103 @@ button.row.is-selected:hover {
   padding: 10px 28px 10px 12px;
 }
 
+/* Feedback: the rating at the foot of the card, the trip question on top of the dock. */
+
+.rate {
+  display: grid;
+  gap: 8px;
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+
+.rate__ask {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rate__ask span {
+  margin-right: auto;
+}
+
+.icon-btn.is-on {
+  background: var(--highlight-wash);
+  color: var(--primary);
+}
+
+.icon-btn:disabled,
+.chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.rate__comment {
+  display: flex;
+  gap: 6px;
+}
+
+.rate__comment input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+}
+
+.rate__privacy {
+  font-size: 0.72rem;
+}
+
+.rate__error {
+  color: var(--error);
+  font-size: 0.8rem;
+}
+
+.trip-check {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 14px 44px 14px 16px;
+  background: var(--free-95-or-more);
+  border-radius: 8px;
+  color: var(--paper);
+  font-size: 0.9rem;
+}
+
+.trip-check .chip {
+  border-color: rgba(255, 255, 255, 0.5);
+  color: var(--paper);
+}
+
+.trip-check .chip:hover:not(:disabled) {
+  background: var(--paper);
+  border-color: var(--paper);
+  color: var(--free-95-or-more);
+}
+
+.trip-check .icon-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.trip-check .muted {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* The red of --error is not readable on the dark green. */
+.trip-check .rate__error {
+  color: var(--paper);
+  font-weight: 600;
+}
+
+.trip-check__close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
 /* Phone: the map runs under the top bar, the card takes the width, the locate button keeps only its icon, and the
    options menu is a sheet from the foot over an ink veil. */
 @media (max-width: 700px) {
