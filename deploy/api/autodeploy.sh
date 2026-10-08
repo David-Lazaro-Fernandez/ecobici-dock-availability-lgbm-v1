@@ -13,7 +13,9 @@ as_owner() {
 }
 
 as_owner fetch --quiet
-if [ "$(as_owner rev-parse HEAD)" = "$(as_owner rev-parse '@{u}')" ]; then
+# Compare with the commit that setup.sh installed, not with the checkout. After a failed deploy the checkout is
+# already up to date, and the next run must try again.
+if [ "$(cat /opt/ecobici/DEPLOYED 2>/dev/null)" = "$(as_owner rev-parse '@{u}')" ]; then
   exit 0
 fi
 as_owner merge --ff-only --quiet '@{u}'
