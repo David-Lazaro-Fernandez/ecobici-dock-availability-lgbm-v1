@@ -6,7 +6,8 @@ this API.
 ## 1. AWS access
 
 Create an IAM user with `iam-policy.json` (replace `YOUR-BUCKET`). Create an access key.
-The API reads captures from `raw/` and writes feedback to `feedback/`.
+The API reads captures from `raw/`. It writes feedback to `feedback/` and the plans that
+people ask for to `plans/`.
 
 ## 2. Model files
 

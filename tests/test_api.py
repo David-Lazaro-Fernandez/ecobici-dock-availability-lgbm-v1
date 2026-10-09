@@ -50,8 +50,8 @@ class FakeService(LiveService):
 
 
 @pytest.fixture
-def client():
-    return TestClient(make_app(FakeService()))
+def client(tmp_path):
+    return TestClient(make_app(FakeService(), plan_sink=LocalSink(tmp_path / "plans")))
 
 
 def test_stations_lists_predictions_keyed_by_horizon(client):
@@ -99,8 +99,8 @@ def test_plan_validates_input(client):
     assert client.get("/v1/plan", params=too_far).status_code == 422
 
 
-def test_no_captures_is_503_and_health_still_answers():
-    client = TestClient(make_app(FakeService(captures=False)))
+def test_no_captures_is_503_and_health_still_answers(tmp_path):
+    client = TestClient(make_app(FakeService(captures=False), plan_sink=LocalSink(tmp_path)))
     assert client.get("/v1/stations").status_code == 503
     h = client.get("/health").json()
     assert h["status"] == "ok" and h["captured_at"] is None
@@ -264,3 +264,106 @@ def test_cors_allows_the_feedback_post(fb_client):
         },
     )
     assert r.status_code == 200
+
+
+@pytest.fixture
+def plan_sink(tmp_path):
+    return LocalSink(tmp_path / "plans")
+
+
+@pytest.fixture
+def plan_client(plan_sink):
+    return TestClient(make_app(FakeService(), plan_sink=plan_sink))
+
+
+def plan_query(**over):
+    return {
+        "from_station": "O",
+        "to_lat": 19.4,
+        "to_lng": -99.17,
+        "plan_id": str(uuid4()),
+        "from_kind": "station",
+        "to_kind": "photon",
+        "to_name": "Torre Reforma",
+        "to_osm": "W123",
+    } | over
+
+
+def test_a_plan_is_saved_once_with_the_public_destination(plan_client, plan_sink):
+    q = plan_query()
+    assert plan_client.get("/v1/plan", params=q).status_code == 200
+    assert plan_client.get("/v1/plan", params=q).status_code == 200
+    [record] = saved(plan_sink)
+    assert plan_sink.root.joinpath("2026/10/07", f"{q['plan_id']}.json.gz").exists()
+    assert record["plan_id"] == q["plan_id"] and record["pickup_id"] == "O"
+    assert record["from"] == {"kind": "station", "name": None, "osm": None, "station_id": "O"}
+    assert record["to"] == {
+        "kind": "photon",
+        "name": "Torre Reforma",
+        "osm": "W123",
+        "lat": 19.4,
+        "lng": -99.17,
+    }
+    cands = {c["id"]: c for c in record["candidates"]}
+    assert set(cands) == {"A", "B", "F"}
+    assert cands["B"]["p_free"] is not None and cands["B"]["walk_m"] > 0
+    # F is the nearest to the destination, then A, then B.
+    assert [cands[i]["walk_order"] for i in "FAB"] == [1, 2, 3]
+
+
+def test_a_private_end_keeps_no_point_and_no_distances(plan_client, plan_sink):
+    q = plan_query(
+        from_lat=19.3801,
+        from_lng=-99.17,
+        from_kind="location",
+        to_kind="address",
+        to_name="Calle Falsa 123",
+    )
+    del q["from_station"]
+    assert plan_client.get("/v1/plan", params=q).status_code == 200
+    [record] = saved(plan_sink)
+    assert record["from"] == {"kind": "location"} and record["to"] == {"kind": "address"}
+    text = json.dumps(record)
+    assert "19.38" not in text and "Falsa" not in text
+    for row in record["pickups"] + record["candidates"]:
+        assert "walk_m" not in row and "walk_min" not in row and row["walk_order"] >= 1
+        assert "total_min" not in row and "expected_min" not in row
+    assert {c["walk_order"] for c in record["candidates"]} == {1, 2, 3}
+
+
+def test_a_plan_without_an_id_is_not_saved(plan_client, plan_sink):
+    q = plan_query()
+    del q["plan_id"]
+    assert plan_client.get("/v1/plan", params=q).status_code == 200
+    assert saved(plan_sink) == []
+
+
+@pytest.mark.parametrize(
+    "bad", [{"plan_id": "nope"}, {"to_kind": "home"}, {"to_osm": "X1"}, {"to_name": "x" * 121}]
+)
+def test_invalid_plan_fields_are_rejected(plan_client, plan_sink, bad):
+    assert plan_client.get("/v1/plan", params=plan_query(**bad)).status_code == 422
+    assert saved(plan_sink) == []
+
+
+def test_a_failed_save_still_answers_the_plan(plan_sink):
+    class Broken:
+        def put(self, key, body):
+            raise OSError("disk full")
+
+    client = TestClient(make_app(FakeService(), plan_sink=Broken()))
+    assert client.get("/v1/plan", params=plan_query()).status_code == 200
+
+
+def test_too_many_plans_from_one_client_are_answered_but_not_saved(plan_client, plan_sink):
+    codes = [plan_client.get("/v1/plan", params=plan_query()).status_code for _ in range(121)]
+    assert codes == [200] * 121
+    assert len(saved(plan_sink)) == 120
+
+
+def test_without_a_plan_sink_the_plan_is_answered_and_not_saved(monkeypatch, tmp_path):
+    monkeypatch.delenv("ECOBICI_PLAN_SINK", raising=False)
+    monkeypatch.chdir(tmp_path)
+    client = TestClient(make_app(FakeService(), feedback_sink=LocalSink(tmp_path / "fb")))
+    assert client.get("/v1/plan", params=plan_query()).status_code == 200
+    assert list(tmp_path.rglob("*.json.gz")) == []

@@ -9,7 +9,7 @@ import { type CSSProperties, type ReactNode, type SyntheticEvent, type KeyboardE
 import { usePhone } from '@/lib/phone';
 import { Drawer, type DrawerOptions } from '@/components/drawer';
 import { type Candidate, type PlanResponse, type StationsResponse, useApi } from '@/lib/api';
-import { type PlacesFile, type Suggestion, bbox, buildIndex, cachedOnline, geocode, loadPlaces, merge, plain, searchPlaces } from '@/lib/places';
+import { type PlacesFile, type Source, type Suggestion, bbox, buildIndex, cachedOnline, geocode, loadPlaces, merge, plain, searchPlaces } from '@/lib/places';
 import { Bike, Clock, Close, Dock, Locate, More, Pin, Send, Sliders, Walk } from '@/components/icons';
 import { type SortKey, sortCandidates } from '@/lib/sort';
 import { type Leg, useTripRoutes } from '@/lib/routes';
@@ -42,7 +42,16 @@ const DEV = process.env.NODE_ENV === 'development';
 const clockFor = (locale: string) => new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: TZ });
 
 type End = 'from' | 'to';
-type Picked = { lat: number; lng: number; label: string; stationId?: string };
+type Picked = { lat: number; lng: number; label: string; kind: Source | 'map' | 'location'; stationId?: string; osm?: string };
+// The plan log keeps the name of a public place only: an address, a map point or the device location can identify a person.
+const PUBLIC_KINDS = new Set<Picked['kind']>(['station', 'index', 'photon']);
+
+function placeParams(p: URLSearchParams, end: End, place: Picked) {
+  p.set(`${end}_kind`, place.kind);
+  if (!PUBLIC_KINDS.has(place.kind)) return;
+  p.set(`${end}_name`, place.label);
+  if (place.osm) p.set(`${end}_osm`, place.osm);
+}
 
 const minutes = (m: number) => `${Math.max(1, Math.round(m))} min`;
 const meters = (m: number) => (m < 950 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(1)} km`);
@@ -237,15 +246,24 @@ export function Planner() {
       p.set('from_lat', String(start.lat));
       p.set('from_lng', String(start.lng));
     }
+    placeParams(p, 'from', start);
+    placeParams(p, 'to', goal);
     return p;
   }, [start, goal, radius, failure]);
-  const plan = useApi<PlanResponse>('/v1/plan', planParams, tick || null);
+  const searchKey = planParams ? String(planParams) : '';
+  const planId = useMemo(() => (searchKey ? crypto.randomUUID() : ''), [searchKey]);
+  // The API saves the plan under planId, and the feedback sends the same id (src/ecobici/plans.py).
+  const requestParams = useMemo(() => {
+    if (!planParams) return null;
+    const p = new URLSearchParams(planParams);
+    p.set('plan_id', planId);
+    return p;
+  }, [planParams, planId]);
+  const plan = useApi<PlanResponse>('/v1/plan', requestParams, tick || null);
   const result = planParams ? plan.data : null;
   const ranked = result?.candidates.filter((c) => c.rank != null) ?? [];
-  const searchKey = planParams ? String(planParams) : '';
   const dropoff = ranked.find((c) => picked?.searchKey === searchKey && c.id === picked.id) ?? ranked[0] ?? null;
   const legs = useTripRoutes(start, result?.pickup ?? null, dropoff, goal);
-  const planId = useMemo(() => (searchKey ? crypto.randomUUID() : ''), [searchKey]);
   const shown: Shown | null =
     result && dropoff
       ? {
@@ -324,7 +342,7 @@ export function Planner() {
   }
 
   function choose(s: Suggestion) {
-    set(editing, { lat: s.lat, lng: s.lng, label: s.name, stationId: s.stationId });
+    set(editing, { lat: s.lat, lng: s.lng, label: s.name, kind: s.source, stationId: s.stationId, osm: s.osm });
   }
 
   async function search(e?: SyntheticEvent<HTMLFormElement>) {
@@ -349,7 +367,7 @@ export function Planner() {
     navigator.geolocation.getCurrentPosition(
       (p) => {
         setBusy(false);
-        set('from', { lat: p.coords.latitude, lng: p.coords.longitude, label: t.planner.myLocation });
+        set('from', { lat: p.coords.latitude, lng: p.coords.longitude, label: t.planner.myLocation, kind: 'location' });
       },
       () => {
         setBusy(false);
@@ -555,7 +573,7 @@ export function Planner() {
             selectedId={dropoff?.id ?? null}
             onSelect={selectDropoff}
             inset={inset}
-            onPickGoal={(p) => set('to', { ...p, label: t.planner.mapPoint })}
+            onPickGoal={(p) => set('to', { ...p, label: t.planner.mapPoint, kind: 'map' })}
             lang={lang}
           />
         </div>

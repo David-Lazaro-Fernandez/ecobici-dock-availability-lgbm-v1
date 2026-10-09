@@ -1,7 +1,7 @@
 // Search tests: the typed text shows the expected suggestions, the keyboard picks one, and a full trip shows the
 // stations. The places come from the real public/lugares.json. The stations, the plan and Photon are fakes.
 
-import { expect, test } from '@playwright/test';
+import { type Page, expect, test } from '@playwright/test';
 import { DROPOFF_NAME, START_NAME, codeOf } from './fixtures';
 import { endInput, expectPicked, openPlanner, openStations, pick, suggestions } from './planner';
 
@@ -79,4 +79,44 @@ test('the card shows the code only for the stations with the same name', async (
   const liverpool = page.locator('.card .row', { hasText: 'Liverpool - Génova' });
   await expect(liverpool.locator('.code')).toHaveText(LIVERPOOL_STATIONS.map(codeOf));
   await expect(page.locator('.card .row.is-best .code')).toHaveCount(0);
+});
+
+// Two Photon answers at the same point: a named place and a street address.
+const PHOTON_FEATURES = [
+  { name: 'Plaza Ficticia', osm_type: 'W', osm_id: 42 },
+  { street: 'Calle Ficticia', housenumber: '12', osm_type: 'N', osm_id: 7 },
+].map((properties) => ({ geometry: { coordinates: [-99.16, 19.42] }, properties }));
+
+/** The query of each plan request, in order. */
+async function planQueries(page: Page) {
+  await page.route('https://photon.komoot.io/**', (route) => route.fulfill({ json: { features: PHOTON_FEATURES } }));
+  const plans: URLSearchParams[] = [];
+  page.on('request', (r) => {
+    if (/\/v1\/plan\?/.test(r.url())) plans.push(new URL(r.url()).searchParams);
+  });
+  return plans;
+}
+
+test('the plan request names the start station and the Photon place, with a plan id', async ({ page }) => {
+  const plans = await planQueries(page);
+  await pick(page, 'from', 'Niños Héroes', START_NAME);
+  await pick(page, 'to', 'plaza ficticia', 'Plaza Ficticia');
+  await expect.poll(() => plans.length).toBeGreaterThan(0);
+  expect(Object.fromEntries(plans.at(-1)!)).toMatchObject({
+    from_kind: 'station',
+    from_name: START_NAME,
+    to_kind: 'photon',
+    to_name: 'Plaza Ficticia',
+    to_osm: 'W42',
+  });
+  expect(plans.at(-1)!.get('plan_id')).toMatch(/^[0-9a-f-]{36}$/);
+});
+
+test('the plan request sends no name for a street address', async ({ page }) => {
+  const plans = await planQueries(page);
+  await pick(page, 'from', 'Niños Héroes', START_NAME);
+  await pick(page, 'to', 'calle ficticia', 'Calle Ficticia 12');
+  await expect.poll(() => plans.at(-1)?.get('to_kind')).toBe('address');
+  expect(plans.at(-1)!.has('to_name')).toBe(false);
+  expect(plans.at(-1)!.has('to_osm')).toBe(false);
 });

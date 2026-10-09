@@ -1,7 +1,7 @@
 // npm test
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildIndex, merge, plain, searchPlaces } from './places.ts';
+import { buildIndex, geocode, merge, plain, searchPlaces } from './places.ts';
 
 const file = {
   version: 1,
@@ -56,4 +56,27 @@ test('merge puts local first, online first for a street number, and drops repeat
   const online = [{ name: 'reforma 222' }, { name: 'Calle 5' }];
   assert.deepEqual(merge('reforma', local, online, 5).map((s) => s.name), ['Reforma 222', 'Roma', 'Calle 5']);
   assert.deepEqual(merge('reforma 222', local, online, 5).map((s) => s.name), ['reforma 222', 'Calle 5', 'Roma']);
+});
+
+test('each suggestion tells its source', () => {
+  assert.equal(searchPlaces(index, 'rio tiber', near, 1)[0].source, 'station');
+  assert.equal(searchPlaces(index, 'torre reforma', near, 1)[0].source, 'index');
+});
+
+test('a Photon place keeps its OpenStreetMap id; a street address is an address', async () => {
+  const feature = (properties) => ({ geometry: { coordinates: [-99.17, 19.42] }, properties });
+  const features = [
+    feature({ name: 'Torre Mitikah', osm_type: 'W', osm_id: 123 }),
+    feature({ street: 'Calle Falsa', housenumber: '123', osm_type: 'N', osm_id: 9 }),
+  ];
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ features }) });
+  try {
+    const [place, address] = await geocode('torre mitikah', near, '', 5);
+    assert.equal(place.source, 'photon');
+    assert.equal(place.osm, 'W123');
+    assert.equal(address.source, 'address');
+  } finally {
+    globalThis.fetch = real;
+  }
 });

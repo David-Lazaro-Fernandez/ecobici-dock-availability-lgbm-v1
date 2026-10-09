@@ -19,6 +19,12 @@
       "Effect": "Allow",
       "Action": "s3:PutObject",
       "Resource": "arn:aws:s3:::YOUR-BUCKET/feedback/*"
+    },
+    {
+      "Sid": "WritePlans",
+      "Effect": "Allow",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::YOUR-BUCKET/plans/*"
     }
   ]
 }
