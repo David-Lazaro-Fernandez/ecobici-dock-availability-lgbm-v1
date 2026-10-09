@@ -14,7 +14,7 @@ import { Bike, Clock, Close, Dock, Locate, More, Pin, Send, Sliders, Walk } from
 import { type SortKey, sortCandidates } from '@/lib/sort';
 import { type Leg, useTripRoutes } from '@/lib/routes';
 import { FREE_LEGEND, pct, sharedNames, shortName } from '@/lib/format';
-import { FREE_STEPS } from '@/components/trip-map';
+import { FREE_STEPS, LANE_CLASSES } from '@/components/trip-map';
 import { RatePlan, TripCheck } from '@/components/feedback';
 import { Help } from '@/components/help';
 import type { Shown } from '@/lib/feedback';
@@ -697,6 +697,14 @@ export function Planner() {
                     {FREE_LEGEND.map((l, i) => (
                       <span key={l}>
                         <i className={`swatch swatch--${i}`} aria-hidden="true" /> {l}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="card__legend-title card__legend-title--lanes">{t.planner.lanesTitle}</p>
+                  <div className="card__legend-items">
+                    {LANE_CLASSES.map((cls) => (
+                      <span key={cls}>
+                        <i className={`lane-swatch lane-swatch--${cls}`} aria-hidden="true" /> {t.planner.lanes[cls]}
                       </span>
                     ))}
                   </div>
