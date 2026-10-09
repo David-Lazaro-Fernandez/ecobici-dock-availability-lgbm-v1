@@ -129,7 +129,21 @@ Decisión (2026-10-08): no se usa OpenSearch. Los registros tienen campos fijos 
   from read_json_auto('plans/**/*.json.gz', union_by_name = true), unnest(candidates) as t(c);
   ```
 
-- **Página `/admin` (pendiente, PR aparte):** en `https://ecobici-docks.duckdns.org/admin`, servida por la API y protegida con `basic_auth` de Caddy. La API escucha solo en `127.0.0.1`, así que solo se llega por Caddy. Vistas: demanda, feedback, lugares de Photon y lista de planes. Necesita lectura en `plans/*` y `feedback/*`.
+- **Página `/admin`:** en `https://ecobici-docks.duckdns.org/admin`. Pestañas: demanda, lugares de Photon, feedback, lista de planes y SQL.
+
+  | Qué | Dónde |
+  | --- | --- |
+  | Copia desde S3, tablas de DuckDB y vistas | `src/ecobici/admin.py` (`Admin`, `sync`, `load`) |
+  | Rutas `/admin` y `/admin/api/*` | `src/ecobici/admin_routes.py` |
+  | Página | `src/ecobici/admin.html` (HTML y JavaScript, sin recursos externos) |
+  | Pruebas | `tests/test_admin.py` |
+  | Puesta en marcha | `deploy/api/README.md`, sección 6 |
+
+  - Solo existe con `ECOBICI_ADMIN=on`. La API no pide contraseña: Caddy protege `/admin*` con `basic_auth`, y la API escucha solo en `127.0.0.1`.
+  - La API copia `plans/` y `feedback/` a `ECOBICI_ADMIN_DIR` (en el servidor, `/opt/ecobici/data/logs/`) como mucho cada 2 min. Necesita `ListLogs` y `ReadLogs` en IAM.
+  - Tablas: `plans`, `candidates`, `pickups`, `feedback`, `stations`. `local_at` es la hora de la captura en la Ciudad de México.
+  - SQL: un solo SELECT, máximo 1,000 filas. Después de cargar las tablas, DuckDB no tiene acceso a archivos y su configuración queda bloqueada, así que no puede leer `api.env`.
+- **Access log:** la unidad de la API corre uvicorn con `--no-access-log`, porque la URL de `/v1/plan` tiene las coordenadas del viaje.
 - **Athena:** opcional, si hace falta SQL desde la consola de AWS.
 
 ## 6. Lugares nuevos para la búsqueda

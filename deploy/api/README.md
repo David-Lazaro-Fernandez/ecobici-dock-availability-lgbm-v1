@@ -97,6 +97,30 @@ curl https://api.your-domain/v1/stations
 
 Root directory `web/`. Environment variable `NEXT_PUBLIC_API_URL=https://your-api-domain`.
 
+## 6. Admin page
+
+`https://ecobici-docks.duckdns.org/admin` shows the plans and the feedback
+(`docs/ciclo_en_vivo.md`). The API does not check a password: Caddy protects `/admin*`. Do the
+steps in this order, so `/admin` is never open without a password:
+
+1. IAM: the user needs `ListLogs` and `ReadLogs` from `iam-policy.json`.
+2. Caddy: make the password hash, and put it in the `basic_auth` block of
+   `/etc/caddy/Caddyfile` (see `Caddyfile`). Then reload Caddy and check that `/admin` asks
+   for the password:
+
+   ```sh
+   caddy hash-password
+   sudo nano /etc/caddy/Caddyfile
+   sudo systemctl reload caddy
+   curl -s -o /dev/null -w '%{http_code}\n' https://ecobici-docks.duckdns.org/admin
+   ```
+
+   The last command must print `401`.
+3. API: add `ECOBICI_ADMIN=on` to `/etc/ecobici/api.env`, then
+   `sudo systemctl restart ecobici-api`.
+
+The API copies `plans/` and `feedback/` to `/opt/ecobici/data/logs/` at most every 2 min.
+
 ## Updating
 
 `setup.sh` enables the `ecobici-autodeploy` timer. Every 5 minutes it fetches the branch that
