@@ -2,7 +2,7 @@
 // stations. The places come from the real public/lugares.json. The stations, the plan and Photon are fakes.
 
 import { type Page, expect, test } from '@playwright/test';
-import { DROPOFF_NAME, START_NAME, codeOf } from './fixtures';
+import { DROPOFF_NAME, START_NAME, codeOf, planResponse } from './fixtures';
 import { endInput, expectPicked, openPlanner, openStations, pick, suggestions } from './planner';
 
 const NO_RESULTS = 'No hay resultados en la zona de Ecobici. Agrega la colonia.';
@@ -69,6 +69,25 @@ test('a full trip shows the drop-off stations with their chance', async ({ page 
   await expect(best).toContainText(DROPOFF_NAME);
   await expect(best.locator('.card__chance')).toHaveText(/\d+ %/);
   await expect(page.locator('.card__pickup')).toContainText('Claudio Bernard-Dr. Liceaga');
+});
+
+test('the availability sort selects its first row, and a picked row stays selected', async ({ page }) => {
+  const plan = planResponse();
+  plan.candidates[2].p_free = 0.999;
+  await page.route(/\/v1\/plan(\?|$)/, (route) => route.fulfill({ json: plan }));
+  await pick(page, 'from', 'Niños Héroes', START_NAME);
+  await pick(page, 'to', 'Acapulco Puebla', DROPOFF_NAME);
+  await openStations(page);
+  const rows = page.locator('.card .row');
+  const selected = page.locator('.card .row.is-selected .row__rank');
+  await expect(selected).toHaveText('1');
+  await page.getByRole('radio', { name: 'Ordenar por probabilidad de lugar libre' }).click();
+  await expect(rows.first().locator('.row__rank')).toHaveText('3');
+  await expect(selected).toHaveText('3');
+  await rows.nth(1).click();
+  await expect(selected).toHaveText('1');
+  await page.getByRole('radio', { name: 'Ordenar por tiempo de viaje' }).click();
+  await expect(selected).toHaveText('1');
 });
 
 test('the card shows the code only for the stations with the same name', async ({ page }) => {
