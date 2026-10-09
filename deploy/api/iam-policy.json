@@ -25,6 +25,19 @@
       "Effect": "Allow",
       "Action": "s3:PutObject",
       "Resource": "arn:aws:s3:::YOUR-BUCKET/plans/*"
+    },
+    {
+      "Sid": "ListLogs",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::YOUR-BUCKET",
+      "Condition": {"StringLike": {"s3:prefix": ["plans/*", "feedback/*"]}}
+    },
+    {
+      "Sid": "ReadLogs",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": ["arn:aws:s3:::YOUR-BUCKET/plans/*", "arn:aws:s3:::YOUR-BUCKET/feedback/*"]
     }
   ]
 }

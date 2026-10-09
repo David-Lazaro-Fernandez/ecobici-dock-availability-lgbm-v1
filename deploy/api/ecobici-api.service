@@ -7,7 +7,8 @@ After=network-online.target
 User=ecobici
 EnvironmentFile=/etc/ecobici/api.env
 WorkingDirectory=/opt/ecobici
-ExecStart=/opt/ecobici/.venv/bin/uvicorn ecobici.api:app --host 127.0.0.1 --port 8000
+# No access log: the query of /v1/plan has the coordinates of the trip.
+ExecStart=/opt/ecobici/.venv/bin/uvicorn ecobici.api:app --host 127.0.0.1 --port 8000 --no-access-log
 Restart=always
 RestartSec=5
 MemoryMax=1500M

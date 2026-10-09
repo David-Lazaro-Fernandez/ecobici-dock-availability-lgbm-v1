@@ -4,6 +4,7 @@
 
 Interactive docs: http://localhost:8000/docs. GET, plus POST /v1/feedback (anonymous,
 see ``ecobici.feedback``). Each plan with a ``plan_id`` is saved, see ``ecobici.plans``.
+With ECOBICI_ADMIN=on, ``/admin`` shows the logs (``ecobici.admin``).
 CORS allows the origins in ECOBICI_API_ORIGINS (comma-separated; default: the Next dev
 server). The logic is in ``ecobici.serve.LiveService``. This module only reads requests
 and writes responses.
@@ -22,8 +23,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import AwareDatetime, BaseModel, Field
 
+from ecobici import admin as adm
 from ecobici import feedback as fb
 from ecobici import plans
+from ecobici.admin_routes import router as admin_router
 from ecobici.collector.sinks import Sink
 from ecobici.eval.baseline_report import HORIZONS
 from ecobici.serve import LiveService
@@ -228,6 +231,7 @@ def make_app(
     service: LiveService | None = None,
     feedback_sink: Sink | None = None,
     plan_sink: Sink | None = None,
+    admin: adm.Admin | None = None,
 ) -> FastAPI:
     svc = service or LiveService()
     sink = feedback_sink or fb.default_sink()
@@ -257,6 +261,18 @@ def make_app(
         CORSMiddleware, allow_origins=ORIGINS, allow_methods=["GET", "POST"], allow_headers=["*"]
     )
     app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+    def station_names():
+        try:
+            rows = svc.current().stations
+        except LookupError:
+            return None
+        return rows.select(id="station_id", code="short_name", name="name")
+
+    if admin is None and adm.enabled():
+        admin = adm.Admin(stations=station_names)
+    if admin is not None:
+        app.include_router(admin_router(admin))
 
     def live_or_503():
         try:
