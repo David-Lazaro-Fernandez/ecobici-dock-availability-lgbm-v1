@@ -2,6 +2,9 @@
 
 `web/AGENTS.md` has the rules for the web app. `.claude/rules/` has the rules for comments, packages and PRs.
 
+`docs/ciclo_en_vivo.md` is the map of the live loop: capture, live predictions, plan and feedback logs, and
+evaluation on the own captures. Read it before you work on any of these parts. Keep it true when you change them.
+
 ## Validate before you describe
 
 A PR description, a commit message or a report tells only what you ran and saw.

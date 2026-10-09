@@ -86,6 +86,14 @@ El horizonte es cuánto tiempo hacia adelante predice el modelo: del momento en 
 - **Dónde:** `POST /v1/feedback` escribe un archivo por respuesta en `ECOBICI_FEEDBACK_SINK`: `data/feedback` en local; en el servidor, `s3://<bucket>/feedback`. El rol IAM de la API necesita `s3:PutObject` en `feedback/*`. Límite: 30 respuestas por hora por cliente.
 - **Pendiente:** cruzar las respuestas de viaje con las capturas cuando haya datos suficientes.
 
+### Registro de planes (2026-10-08)
+
+- **Para qué:** saber de dónde salen y a dónde van las personas, medir el modelo en los viajes que se piden de verdad (paso 9) y comparar la estación recomendada con la más cercana al destino (V9). Los lugares de Photon que se eligen más de una vez se pueden agregar a `lugares.json`.
+- **Qué se guarda:** un archivo por plan con el mismo `plan_id` que el feedback: estaciones, hora de la captura, probabilidades mostradas y cómo se eligió cada extremo (`station`, `index`, `photon`, `address`, `map`, `location`).
+- **Privacidad:** solo un lugar público (estación, lugar del índice o lugar con nombre de Photon) guarda su nombre y sus coordenadas. Una dirección, un punto del mapa o la ubicación del dispositivo no guarda nombre ni coordenadas, y sus distancias se cambian por un orden: con las distancias a tres estaciones se calcula el punto exacto. No se guarda el texto escrito ni la IP.
+- **Dónde:** `GET /v1/plan` escribe en `ECOBICI_PLAN_SINK`; en el servidor, `s3://<bucket>/plans`. Sin esa variable no se guarda nada. El rol IAM de la API necesita `s3:PutObject` en `plans/*`. Se guarda la primera respuesta de cada plan, hasta 120 planes por hora por cliente.
+- **Pendiente:** el reporte semanal (demanda, precisión sobre las capturas, recomendada contra más cercana, lugares de Photon).
+
 ### Probado y descartado
 
 - **Rezagos con ventana centrada** (2026-10-07). Recupera casi todos los rezagos (de ~47 % a ~95 %), pero en VAL_REPORT el BSS cambia ≤ 0.003 y la calibración no cambia. El modelo congelado sigue con `trailing`. Ver [M6](reports/M6_lgbm.md#experimento-rezagos-con-ventana-centrada-2026-10-07).

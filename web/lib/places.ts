@@ -6,13 +6,16 @@ import type { Station } from '@/lib/api';
 
 const PLACES_URL = '/lugares.json';
 const GEOCODER = 'https://photon.komoot.io/api/';
-const CACHE_KEY = 'ecobici-geocode-v1';
+const CACHE_KEY = 'ecobici-geocode-v2';
 const CACHE_MAX = 60;
 const MARGIN_DEG = 0.02;
 // Ecobici stations come before every kind in the index.
 const STATION_RANK = -1;
 
-export type Suggestion = { lat: number; lng: number; name: string; context: string; stationId?: string };
+/** Where a suggestion comes from. An `address` has a house number or no name: the plan log keeps no name for it. */
+export type Source = 'station' | 'index' | 'photon' | 'address';
+/** `osm`: the OpenStreetMap id of a Photon place, as N123, W123 or R123. */
+export type Suggestion = { lat: number; lng: number; name: string; context: string; source: Source; stationId?: string; osm?: string };
 type Place = Suggestion & { rank: number; plain: string; words: string[]; kindWords: string[] };
 export type PlacesFile = { version: number; kinds: string[]; places: [string, number, number, number][] };
 
@@ -57,14 +60,14 @@ const SPANISH_LABELS: IndexLabels = { station: (code) => `Estación Ecobici ${co
 export function buildIndex(file: PlacesFile | null, stations: Station[], labels: IndexLabels = SPANISH_LABELS): Place[] {
   const out: Place[] = stations.map((s) =>
     makePlace(
-      { lat: s.lat, lng: s.lng, name: s.name.replace(/^CE-\d+\s*/, ''), context: labels.station(s.code), stationId: s.id },
+      { lat: s.lat, lng: s.lng, name: s.name.replace(/^CE-\d+\s*/, ''), context: labels.station(s.code), source: 'station', stationId: s.id },
       STATION_RANK,
       STATION_KIND_WORDS,
     ),
   );
   const kindWords = file?.kinds.map(kindWordsOf) ?? [];
   for (const [name, kind, lat, lng] of file?.places ?? [])
-    out.push(makePlace({ lat, lng, name, context: labels.kind(file!.kinds[kind]) }, kind, kindWords[kind]));
+    out.push(makePlace({ lat, lng, name, context: labels.kind(file!.kinds[kind]), source: 'index' }, kind, kindWords[kind]));
   return out;
 }
 
@@ -133,7 +136,9 @@ function toSuggestion(f: PhotonFeature): Suggestion {
   const context = [street, p.district ?? p.locality, p.city ?? p.county]
     .filter((v, i, all) => v && v !== p.name && all.indexOf(v) === i)
     .join(', ');
-  return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], name: p.name ?? street, context };
+  const address = Boolean(p.housenumber) || !p.name;
+  const osm = p.osm_type && p.osm_id ? `${p.osm_type}${p.osm_id}` : undefined;
+  return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], name: p.name ?? street, context, source: address ? 'address' : 'photon', osm };
 }
 
 const remote = new Map<string, Suggestion[]>();
