@@ -20,9 +20,13 @@
   --station-outside-trip: #b9b8b2;
   --station-no-forecast: #c3c2b7;
   --route-line: #3987e5;
+  /* Bike lanes: --primary at 30 % or 20 % opacity. */
+  --bike-lane-separated: rgba(22, 143, 61, 0.3);
+  --bike-lane-painted: rgba(22, 143, 61, 0.2);
+  --bike-lane-shared: rgba(22, 143, 61, 0.3);
   --map-land: #f4f7f2;
   --map-residential: #eef2ec;
-  --map-building: #e6ece3;
+  --map-building: #e8e9e6;
   --map-street: #dde6da;
   --map-park: #cfe9d5;
   --map-water: #cfe0e6;
@@ -1231,6 +1235,28 @@ button.row.is-selected:hover {
 }
 .swatch--none {
   background: var(--station-no-forecast);
+}
+
+.card__legend-title--lanes {
+  margin-top: 8px;
+}
+
+.lane-swatch {
+  display: inline-block;
+  flex: none;
+  width: 18px;
+  border-top: 3px solid;
+}
+.lane-swatch--separated {
+  border-top-width: 5px;
+  border-top-color: var(--bike-lane-separated);
+}
+.lane-swatch--painted {
+  border-top-color: var(--bike-lane-painted);
+}
+.lane-swatch--shared {
+  border-top-style: dotted;
+  border-top-color: var(--bike-lane-shared);
 }
 
 .maplibregl-popup-content {

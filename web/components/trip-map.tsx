@@ -34,6 +34,10 @@ const BASEMAP_PAINT: [layer: string, property: ColorPaint, cssVar: string][] = [
 ];
 // Served from public/ (scripts/copy-worker.mjs). When bundled, MapLibre cannot find the worker next to its module.
 const WORKER_URL = '/maplibre-gl-worker.mjs';
+// Bike lanes from OpenStreetMap (scripts/export_bike_lanes.py). Without the file, the map has no lane layer.
+const BIKE_LANES_URL = '/ciclovias.geojson';
+export const LANE_CLASSES = ['separated', 'painted', 'shared'] as const;
+type LaneClass = (typeof LANE_CLASSES)[number];
 const CIRCLE_STEPS = 64;
 // Space around the start and the destination. On a phone the free area is small, so the camera zooms out more.
 const FRAME_MARGIN_PX = 40;
@@ -159,6 +163,17 @@ function relabel(m: maplibregl.Map, lang: Lang) {
   }
 }
 
+// Under every other layer. Painted and shared lanes show from closer zooms, so the city view stays clean.
+function addBikeLanes(m: maplibregl.Map, color: (cls: LaneClass) => string) {
+  m.addSource('bike-lanes', { type: 'geojson', data: BIKE_LANES_URL });
+  const width = (far: number, near: number): maplibregl.ExpressionSpecification => ['interpolate', ['linear'], ['zoom'], 11, far, 16, near];
+  const byClass = (cls: LaneClass): maplibregl.FilterSpecification => ['==', ['get', 'class'], cls];
+  const layout: maplibregl.LineLayerSpecification['layout'] = { 'line-cap': 'round', 'line-join': 'round' };
+  m.addLayer({ id: 'lanes-shared', type: 'line', source: 'bike-lanes', filter: byClass('shared'), minzoom: 13, layout, paint: { 'line-color': color('shared'), 'line-width': width(1.2, 3), 'line-dasharray': [0.1, 2] } });
+  m.addLayer({ id: 'lanes-painted', type: 'line', source: 'bike-lanes', filter: byClass('painted'), minzoom: 12, layout, paint: { 'line-color': color('painted'), 'line-width': width(1.2, 3.5) } });
+  m.addLayer({ id: 'lanes-separated', type: 'line', source: 'bike-lanes', filter: byClass('separated'), layout, paint: { 'line-color': color('separated'), 'line-width': width(1.8, 5) } });
+}
+
 export default function TripMap({
   center,
   stations,
@@ -260,6 +275,7 @@ export default function TripMap({
       for (const [layer, property, cssVar] of BASEMAP_PAINT) if (m.getLayer(layer)) m.setPaintProperty(layer, property, v(cssVar));
       relabel(m, langNow.current);
       for (const id of ['stations', 'radius', 'walk', 'bike', 'candidates', 'start']) m.addSource(id, { type: 'geojson', data: collection([]) });
+      addBikeLanes(m, (cls) => v(`--bike-lane-${cls}`));
       m.addLayer({
         id: 'stations',
         type: 'circle',
