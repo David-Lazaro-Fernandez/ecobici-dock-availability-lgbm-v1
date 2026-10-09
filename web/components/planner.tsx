@@ -261,7 +261,9 @@ export function Planner() {
   }, [planParams, planId]);
   const plan = useApi<PlanResponse>('/v1/plan', requestParams, tick || null);
   const result = planParams ? plan.data : null;
-  const ranked = result?.candidates.filter((c) => c.rank != null) ?? [];
+  const sorted = result ? sortCandidates(result.candidates, sortBy) : [];
+  // Without a pick, the drop-off is the first row of the list in the chosen order.
+  const ranked = sorted.filter((c) => c.rank != null);
   const dropoff = ranked.find((c) => picked?.searchKey === searchKey && c.id === picked.id) ?? ranked[0] ?? null;
   const legs = useTripRoutes(start, result?.pickup ?? null, dropoff, goal);
   const shown: Shown | null =
@@ -387,7 +389,6 @@ export function Planner() {
   }
 
   const open = unfolded === searchKey;
-  const sorted = result ? sortCandidates(result.candidates, sortBy) : [];
   // A drop-off picked on the map stays in the list.
   const rows = open ? sorted : sorted.filter((c, i) => i < ROWS_FOLDED || c.id === dropoff?.id);
   const folded = sorted.length - rows.length;
