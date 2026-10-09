@@ -1,0 +1,37 @@
+graphhopper:
+  datareader.file: /gh/data/cdmx_lanes.osm.pbf
+  graph.location: /gh/data/graph-cache
+  custom_models.directory: /gh/conf
+  profiles:
+    - name: bike_fast
+      custom_model_files: [bike.json]
+    - name: bike_lanes
+      custom_model_files: [bike.json, lanes.json]
+  profiles_ch:
+    - profile: bike_fast
+    - profile: bike_lanes
+  profiles_lm: []
+  # mtb_network carries our lane class (tag_lanes.py). No mtb profile reads it.
+  graph.encoded_values: bike_priority, bike_access, roundabout, bike_average_speed, bike_road_access, foot_road_access, mtb_rating, hike_rating, country, road_class, bike_network, osm_way_id, mtb_network
+  import.osm.ignored_highways: motorway,motorway_link
+  prepare.min_network_size: 200
+  prepare.subnetworks.threads: 1
+  prepare.ch.threads: 1
+  routing.snap_preventions_default: tunnel, bridge, ferry
+  graph.dataaccess.default_type: RAM_STORE
+server:
+  application_connectors:
+    - type: http
+      port: 8989
+      bind_host: 0.0.0.0
+  request_log:
+    appenders: []
+  admin_connectors:
+    - type: http
+      port: 8990
+      bind_host: 0.0.0.0
+logging:
+  appenders:
+    - type: console
+      time_zone: UTC
+      log_format: "%d{HH:mm:ss.SSS} %-5level %logger{30} - %msg%n"

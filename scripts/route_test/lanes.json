@@ -1,0 +1,10 @@
+{
+  "priority": [
+    { "if": "mtb_network == INTERNATIONAL || road_class == CYCLEWAY", "multiply_by": "1.0" },
+    { "else_if": "mtb_network == NATIONAL", "multiply_by": "0.8" },
+    { "else_if": "mtb_network == REGIONAL", "multiply_by": "0.6" },
+    { "else_if": "road_class == RESIDENTIAL || road_class == LIVING_STREET || road_class == PEDESTRIAN", "multiply_by": "0.6" },
+    { "else_if": "road_class == SERVICE || road_class == UNCLASSIFIED || road_class == TRACK", "multiply_by": "0.5" },
+    { "else": "", "multiply_by": "0.2" }
+  ]
+}
