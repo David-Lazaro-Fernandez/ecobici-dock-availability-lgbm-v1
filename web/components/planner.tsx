@@ -9,7 +9,27 @@ import { type CSSProperties, type ReactNode, type SyntheticEvent, type KeyboardE
 import { usePhone } from '@/lib/phone';
 import { Drawer, type DrawerOptions } from '@/components/drawer';
 import { type Candidate, type PlanResponse, type StationsResponse, useApi } from '@/lib/api';
-import { type PlacesFile, type Source, type Suggestion, bbox, buildIndex, cachedOnline, geocode, loadPlaces, merge, plain, searchPlaces } from '@/lib/places';
+import {
+  type NumbersFile,
+  type PlacesFile,
+  type Source,
+  type StreetsFile,
+  type Suggestion,
+  bbox,
+  buildAddresses,
+  buildIndex,
+  buildStreets,
+  cachedOnline,
+  geocode,
+  loadNumbers,
+  loadPlaces,
+  loadStreets,
+  merge,
+  plain,
+  searchAddresses,
+  searchPlaces,
+  searchStreets,
+} from '@/lib/places';
 import { Bike, Clock, Close, Dock, Locate, More, Pin, Send, Sliders, Walk } from '@/components/icons';
 import { type SortKey, sortCandidates } from '@/lib/sort';
 import { type Leg, useTripRoutes } from '@/lib/routes';
@@ -31,6 +51,8 @@ const FAILURE_COSTS = [5, 7.5, 10];
 const ONLINE_MIN_CHARS = 3;
 const SUGGEST_WAIT_MS = 250;
 const SUGGEST_LIMIT = 5;
+// Streets share the list with places and Photon: a few are enough.
+const STREET_LIMIT = 3;
 // The map area under the docked bar and the card (desktop). The camera frames the rest.
 const DOCK_OVERLAP = 170;
 const CARD_WIDTH = 420;
@@ -229,9 +251,18 @@ export function Planner() {
   const stations = live.data?.stations ?? [];
   const box = useMemo(() => bbox(stations), [stations.length]);
   const [placesFile, setPlacesFile] = useState<PlacesFile | null>(null);
+  const [streetsFile, setStreetsFile] = useState<StreetsFile | null>(null);
+  const [numbersFile, setNumbersFile] = useState<NumbersFile | null>(null);
   useEffect(() => {
     loadPlaces().then(setPlacesFile);
+    loadStreets().then(setStreetsFile);
   }, []);
+  const streets = useMemo(() => buildStreets(streetsFile), [streetsFile]);
+  const addresses = useMemo(() => buildAddresses(numbersFile), [numbersFile]);
+  const hasDigit = /\d/.test(text);
+  useEffect(() => {
+    if (hasDigit) loadNumbers().then(setNumbersFile);
+  }, [hasDigit]);
   const index = useMemo(
     () => buildIndex(placesFile, stations, { station: t.places.station, kind: (k) => t.places.kinds[k] ?? k }),
     [placesFile, stations.length, t],
@@ -290,14 +321,16 @@ export function Planner() {
   // Suggestions: the local index and saved answers at once, Photon after a pause.
   useEffect(() => {
     if (!typing) return setSuggestions([]);
-    const local = searchPlaces(index, text, near, SUGGEST_LIMIT);
-    setSuggestions(merge(text, local, cachedOnline(text, near, SUGGEST_LIMIT), SUGGEST_LIMIT));
+    const local = [...searchPlaces(index, text, near, SUGGEST_LIMIT), ...searchStreets(streets, text, near, STREET_LIMIT)];
+    // An address of the house-number file is the best answer for "street number": it goes before Photon.
+    const exact = searchAddresses(addresses, text, near, SUGGEST_LIMIT, t.places.approximate);
+    setSuggestions(merge(text, local, [...exact, ...cachedOnline(text, near, SUGGEST_LIMIT)], SUGGEST_LIMIT));
     setActive(0);
     if (plain(text).length < ONLINE_MIN_CHARS) return;
     const ctrl = new AbortController();
     const timer = setTimeout(() => {
       geocode(text, near, box, SUGGEST_LIMIT, ctrl.signal)
-        .then((online) => setSuggestions(merge(text, local, online, SUGGEST_LIMIT)))
+        .then((online) => setSuggestions(merge(text, local, [...exact, ...online], SUGGEST_LIMIT)))
         .catch(() => {
           if (!ctrl.signal.aborted) setNotice(t.planner.searchDown);
         });
@@ -306,7 +339,7 @@ export function Planner() {
       clearTimeout(timer);
       ctrl.abort();
     };
-  }, [text, typing, index, box, near.lat, near.lng, t]);
+  }, [text, typing, index, streets, addresses, box, near.lat, near.lng, t]);
 
   function set(end: End, p: Picked | null) {
     if (end === 'from') setStart(p);

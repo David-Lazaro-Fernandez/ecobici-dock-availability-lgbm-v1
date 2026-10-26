@@ -58,9 +58,10 @@ Las predicciones no se guardan en la API. El modelo es determinista y el paquete
 
 | Qué | Dónde |
 | --- | --- |
-| Búsqueda local (estaciones + `lugares.json`) y en línea (Photon) | `web/lib/places.ts` (`buildIndex`, `searchPlaces`, `geocode`, `merge`) |
+| Búsqueda local (estaciones, `lugares.json`, calles y números) y en línea (Photon) | `web/lib/places.ts` (`buildIndex`, `searchPlaces`, `buildStreets`, `searchStreets`, `buildAddresses`, `searchAddresses`, `geocode`, `merge`) |
 | Origen de cada sugerencia (`source`: `station`, `index`, `photon`, `address`) | `web/lib/places.ts` (`Source`, `toSuggestion`) |
 | Índice de lugares | `web/public/lugares.json`, generado por `scripts/export_places.py` (Overpass, a mano) |
+| Índice de calles y de números de casa | `web/public/calles.json` y `web/public/numeros.json`, generados por `scripts/export_streets.py` (a mano). Calles: Vialidades de la Ciudad de México, INEGI (CC-BY-4.0-ESP). Números: DENUE de la Ciudad de México, INEGI. Solo la zona de Ecobici |
 | Petición del plan, `plan_id` y campos del lugar | `web/components/planner.tsx` (`placeParams`, `planParams`, `requestParams`) |
 | Preguntas de feedback | `web/components/feedback.tsx`, `web/lib/feedback.ts` |
 
@@ -74,6 +75,10 @@ Las predicciones no se guardan en la API. El modelo es determinista y el paquete
 | Llave | `plans/YYYY/MM/DD/<plan_id>.json.gz`, con la fecha local de la captura |
 | Permiso IAM | `deploy/api/iam-policy.json` (`WritePlans`) |
 | Pruebas | `tests/test_api.py` (`test_a_plan_is_saved_once…`, `test_a_private_end…`), `web/e2e/search.spec.ts` |
+
+Las direcciones con número salen del DENUE: un punto para cada calle, número y colonia. "Durango 49" da "Calle Durango 49, Roma Norte" en el punto del DENUE, y va antes que Photon. `numeros.json` pesa ~3.4 MB (~0.9 MB comprimido) y la web lo descarga la primera vez que el texto tiene un dígito.
+
+Una casa sin establecimiento no está en el DENUE. Entonces la web estima el punto y lo marca "aprox.". Primero entre los dos números conocidos más cercanos del mismo lado de la calle (error mediano 16 m, cubre ~70%). Si no hay vecinos, en la cuadra de su centena: cada tramo de `calles.json` es una cuadra, y `numeros.json` guarda por cuadra la posición de cada centena (error mediano ~90 m en esos casos; con los dos métodos se cubre ~97%). Sin cuadra, da la calle más cercana a la persona (`calles.json`), y Photon da el número si OpenStreetMap lo tiene. Una dirección o una calle es `address`: el registro no guarda su nombre.
 
 Reglas:
 

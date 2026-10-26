@@ -1,5 +1,5 @@
 // Search tests: the typed text shows the expected suggestions, the keyboard picks one, and a full trip shows the
-// stations. The places come from the real public/lugares.json. The stations, the plan and Photon are fakes.
+// stations. The places, streets and house numbers come from the real public/lugares.json, calles.json and numeros.json. The stations, the plan and Photon are fakes.
 
 import { type Page, expect, test } from '@playwright/test';
 import { DROPOFF_NAME, START_NAME, codeOf, planResponse } from './fixtures';
@@ -51,6 +51,28 @@ test('the arrow keys move the choice before Enter', async ({ page }) => {
   await expect(second).toHaveClass(/is-active/);
   await endInput(page, 'from').press('Enter');
   await expectPicked(page, 'from', secondName);
+});
+
+test('a street and a house number suggest the address from the local file when Photon finds nothing', async ({ page }) => {
+  await endInput(page, 'from').fill('durango 49');
+  await expect(suggestions(page).first()).toHaveText(/^Calle Durango 49.*Roma Norte, Cuauhtémoc$/);
+  await endInput(page, 'from').press('Enter');
+  await expectPicked(page, 'from', 'Calle Durango 49');
+});
+
+test('a house number that is not in the file is estimated between its neighbours', async ({ page }) => {
+  await endInput(page, 'from').fill('patricio sanz 515');
+  await expect(suggestions(page).first()).toHaveText(/^Calle Patricio Sanz 515.*Benito Juárez · aprox\.$/);
+});
+
+test('a house number that is not in the file is estimated, marked as approximate', async ({ page }) => {
+  await endInput(page, 'from').fill('patricio sanz 515');
+  await expect(suggestions(page).first()).toHaveText(/^Calle Patricio Sanz 515.*Benito Juárez · aprox\.$/);
+});
+
+test('a house number that is not in the file suggests the street', async ({ page }) => {
+  await endInput(page, 'from').fill('durango 4999');
+  await expect(suggestions(page).first()).toHaveText(/^Calle Durango.*Cuauhtémoc$/);
 });
 
 test('a text without places tells the person to add the neighbourhood', async ({ page }) => {
