@@ -36,6 +36,7 @@ const es = {
   },
   places: {
     station: (code: string) => `Estación Ecobici ${code}`,
+    approximate: 'aprox.',
     kinds: {} as Record<string, string>,
   },
   planner: {
@@ -194,6 +195,7 @@ const en: Messages = {
   whyNoBike: { unavailable: 'is out of service', stale: 'sends no recent data', empty: 'has no bikes now' },
   places: {
     station: (code) => `Ecobici station ${code}`,
+    approximate: 'approx.',
     kinds: {
       Alcaldía: 'Borough',
       Colonia: 'Neighbourhood',
