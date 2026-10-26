@@ -1,64 +1,69 @@
-# ecobici-dock-availability-lgbm-v1
+# ¡Sí hay!
 
-ML model to predict whether you will end your ride and find parking at your destination dock (Ecobici, Mexico City).
+**¿Dónde dejo mi bici cuando llegue?** ¡Sí hay! te dice en qué estación de Ecobici (Ciudad de México) es más probable encontrar un anclaje libre, a la hora en que llegas.
 
-- Product requirements: [`docs/PRD.md`](docs/PRD.md)
-- Engineering plan, review findings and decisions: [`docs/ENG_PLAN.md`](docs/ENG_PLAN.md)
-- How the model was built, justified and tested: [`docs/modeling.md`](docs/modeling.md)
-- Stage reports (M2–M6): [`docs/reports/`](docs/reports/)
+<p align="center">
+  <img src="docs/img/escritorio-plan.png" alt="Plan de viaje en escritorio: estación de salida, estación de llegada con 98 % de probabilidad y ruta en el mapa" width="860">
+</p>
 
-## Setup
+## El problema
 
-Requires [uv](https://docs.astral.sh/uv/). On macOS, LightGBM also needs OpenMP:
+Mucha gente deja la bici en la estación más cercana a su destino. A veces esa estación está llena. Entonces busca otra, y el tiempo de búsqueda puede ser mayor que el del viaje.
 
-```sh
-brew install libomp
-uv sync --all-extras
-```
+La app de Ecobici muestra los anclajes libres **ahora**. Tú llegas **dentro de 15, 30 o 45 minutos**.
 
-On the EC2 capture box only the collector is needed (no LightGBM, no OpenMP):
+## Qué hace
 
-```sh
-uv sync --extra collector --no-dev
-```
+Escribes de dónde sales y a dónde vas. ¡Sí hay! responde:
 
-## Checks
+- dónde tomar la bici, si tu estación de salida no tiene;
+- en qué estación dejarla, con la probabilidad de encontrar lugar libre cuando llegues;
+- otras estaciones de respaldo, ordenadas por tiempo, por distancia a pie o por disponibilidad;
+- la ruta en el mapa, con las ciclovías de la ciudad.
 
-```sh
-uv run ruff check .
-uv run ruff format --check .
-uv run pytest
-```
+<p align="center">
+  <img src="docs/img/movil-plan.png" alt="Plan de viaje en el celular" width="280">
+  &nbsp;&nbsp;
+  <img src="docs/img/movil-busqueda.png" alt="Búsqueda por calle y número en el celular" width="280">
+</p>
 
-## Dev station viewer
+## Funciones
 
-A Streamlit page to look at the live feed or local captures. It shows a map coloured by
-label, a filterable table, and one station's docks and bikes over time.
+- **Probabilidad de lugar libre al llegar.** El porcentaje usa cuatro colores en el mapa, de menos de 50 % a 95 % o más.
+- **Búsqueda por calle y número.** Escribe "Durango 49" o "Patricio Sanz 515". Si el número no está en los datos, la app lo estima y lo marca como "aprox.".
+- **Lugares y estaciones.** También busca por nombre de lugar o de estación, y por tu ubicación.
+- **Tres formas de ordenar.** Tiempo total, caminata al destino o disponibilidad.
+- **Mapa con ciclovías.** Separadas, pintadas y compartidas.
+- **Español e inglés.**
+- **Tu opinión cuenta.** Después del viaje, la app pregunta si había lugar. Esas respuestas sirven para medir el modelo con datos reales.
 
-```sh
-uv run python -m ecobici.ingest.captures download   # optional: pull captures (bucket from S3_BUCKET_NAME)
-uv run streamlit run apps/station_viewer.py --server.address localhost
-```
+<p align="center">
+  <img src="docs/img/escritorio-busqueda.png" alt="Búsqueda de la dirección Durango 49 en escritorio" width="860">
+</p>
 
-## Layout
+## Cómo funciona
 
-```
-src/ecobici/
-  config.py     # agreed constants (feed URLs, capture cadence, horizons, thresholds)
-  collector/    # GBFS capture (runs on EC2, writes to S3)
-  ingest/       # gbfs_raw, maxhalford, openmeteo, trips
-  features/
-  models/       # baselines, lgbm, calibration
-  eval/         # metrics, temporal splits, recommendation simulator
-  recommender/  # offline scoring
-scripts/        # CLI entry point per stage
-notebooks/      # V1–V6 diagnostics (read-only over data/)
-tests/
-docs/
-```
+1. **Captura.** Cada 2 minutos guardamos el estado de todas las estaciones (feed público GBFS de Ecobici).
+2. **Predicción.** Un modelo LightGBM calcula la probabilidad de que cada estación esté llena a los 15, 30 y 45 minutos. Usa el estado actual, la hora, el día y el clima.
+3. **Recomendación.** Combina la probabilidad con la caminata y el tiempo en bici para elegir la mejor estación y las de respaldo.
 
-`data/`, `raw/` and `artifacts/` are git-ignored: everything derived is rebuilt from raw captures.
+## Qué tan bien funciona
 
-## License
+En la prueba con datos de octubre a diciembre de 2025, el modelo reduce el error de la probabilidad cerca de 20 % frente a la mejor alternativa simple (suponer que la estación sigue como está). Las probabilidades también están calibradas: cuando dice "80 %", pasa cerca de 8 de cada 10 veces.
 
-Apache 2.0. Data sources carry their own terms; see `docs/ENG_PLAN.md` §2.12.
+El detalle está en [`docs/modeling.md`](docs/modeling.md).
+
+## Más información
+
+| Tema | Documento |
+| --- | --- |
+| Qué construimos y por qué | [`docs/PRD.md`](docs/PRD.md) |
+| Cómo se construyó y se probó el modelo | [`docs/modeling.md`](docs/modeling.md) |
+| Plan de ingeniería y decisiones | [`docs/ENG_PLAN.md`](docs/ENG_PLAN.md) |
+| Captura, predicción en vivo y evaluación | [`docs/ciclo_en_vivo.md`](docs/ciclo_en_vivo.md) |
+| Instalar, probar y desarrollar | [`docs/desarrollo.md`](docs/desarrollo.md) |
+| Reportes de cada etapa | [`docs/reports/`](docs/reports/) |
+
+## Licencia
+
+Apache 2.0. Los datos tienen sus propios términos: ver `docs/ENG_PLAN.md` §2.12.
