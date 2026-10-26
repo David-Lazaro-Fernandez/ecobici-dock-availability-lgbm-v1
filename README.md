@@ -1,20 +1,13 @@
 # ¡Sí hay!
 
-**¿Dónde dejo mi bici cuando llegue?** ¡Sí hay! te dice en qué estación de Ecobici (Ciudad de México) es más probable encontrar un anclaje libre, a la hora en que llegas.
+**¿Cansado de perder +15 minutos buscando donde dejar tu ecobici?** ¡Sí hay! te dice en qué estación de Ecobici es más probable encontrar un anclaje libre, a la hora en que llegas.
 
 <p align="center">
   <img src="docs/img/escritorio-plan.png" alt="Plan de viaje en escritorio: estación de salida, estación de llegada con 98 % de probabilidad y ruta en el mapa" width="860">
 </p>
 
-## El problema
 
-Mucha gente deja la bici en la estación más cercana a su destino. A veces esa estación está llena. Entonces busca otra, y el tiempo de búsqueda puede ser mayor que el del viaje.
-
-La app de Ecobici muestra los anclajes libres **ahora**. Tú llegas **dentro de 15, 30 o 45 minutos**.
-
-## Qué hace
-
-Escribes de dónde sales y a dónde vas. ¡Sí hay! responde:
+Solo escribe de dónde sales y a dónde vas. La app te dice:
 
 - dónde tomar la bici, si tu estación de salida no tiene;
 - en qué estación dejarla, con la probabilidad de encontrar lugar libre cuando llegues;
@@ -29,23 +22,18 @@ Escribes de dónde sales y a dónde vas. ¡Sí hay! responde:
 
 ## Funciones
 
-- **Probabilidad de lugar libre al llegar.** El porcentaje usa cuatro colores en el mapa, de menos de 50 % a 95 % o más.
-- **Búsqueda por calle y número.** Escribe "Durango 49" o "Patricio Sanz 515". Si el número no está en los datos, la app lo estima y lo marca como "aprox.".
-- **Lugares y estaciones.** También busca por nombre de lugar o de estación, y por tu ubicación.
-- **Tres formas de ordenar.** Tiempo total, caminata al destino o disponibilidad.
-- **Mapa con ciclovías.** Separadas, pintadas y compartidas.
-- **Español e inglés.**
-- **Tu opinión cuenta.** Después del viaje, la app pregunta si había lugar. Esas respuestas sirven para medir el modelo con datos reales.
+- **Probabilidad de lugar libre al llegar**
+- **Búsqueda por calle y número**
+- **Lugares, estaciones y tu ubicación**
+- **Tres formas de ordenar:** tiempo, caminata o disponibilidad
+- **Mapa con ciclovías**
 
 <p align="center">
   <img src="docs/img/escritorio-busqueda.png" alt="Búsqueda de la dirección Durango 49 en escritorio" width="860">
 </p>
 
-## Cómo funciona
 
-1. **Captura.** Cada 2 minutos guardamos el estado de todas las estaciones (feed público GBFS de Ecobici).
-2. **Predicción.** Un modelo LightGBM calcula la probabilidad de que cada estación esté llena a los 15, 30 y 45 minutos. Usa el estado actual, la hora, el día y el clima.
-3. **Recomendación.** Combina la probabilidad con la caminata y el tiempo en bici para elegir la mejor estación y las de respaldo.
+Cada 2 minutos guardamos el estado de todas las estaciones (feed público GBFS de Ecobici). Un modelo LightGBM calcula la probabilidad de que cada estación esté llena a los 15, 30 y 45 minutos. Usa el estado actual, la hora, el día y el clima. Combina la probabilidad con la caminata y el tiempo en bici para elegir la mejor estación y las de respaldo.
 
 ## Qué tan bien funciona
 
