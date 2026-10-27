@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Ecobici admin</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --text: #1d1f1e; --muted: #5f6662; --line: #dde1de;
+    --accent: #1f7a4d; --accent-soft: #d9efe2; --error: #b42318;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141716; --panel: #1c201e; --text: #e8ebe9; --muted: #9aa39e; --line: #2e3431;
+      --accent: #5cc48b; --accent-soft: #23402f; --error: #f97066;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 12px 16px;
+    border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; }
+  h1 { font-size: 16px; margin: 0 12px 0 0; }
+  nav { display: flex; gap: 4px; flex-wrap: wrap; }
+  nav button, .run { border: 1px solid var(--line); background: transparent; color: var(--text);
+    padding: 6px 10px; border-radius: 6px; cursor: pointer; font: inherit; }
+  nav button[aria-selected="true"] { background: var(--accent-soft); border-color: var(--accent); }
+  .run { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+  label { color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+  input, select, textarea { font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+  #status { margin-left: auto; color: var(--muted); font-size: 12px; }
+  #status.error { color: var(--error); }
+  main { padding: 16px; max-width: 1200px; margin: 0 auto; }
+  section { display: none; }
+  section.shown { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px;
+    overflow-x: auto; }
+  .card.wide { grid-column: 1 / -1; }
+  h2 { font-size: 13px; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td.num { text-align: right; }
+  .bar { display: grid; grid-template-columns: 90px 1fr 40px; gap: 8px; align-items: center; margin: 2px 0; }
+  .bar span:nth-child(2) { height: 10px; background: var(--accent); border-radius: 2px; }
+  .bar span:last-child { text-align: right; }
+  .empty { color: var(--muted); }
+  .filters { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
+  textarea { width: 100%; min-height: 120px; font-family: ui-monospace, monospace; }
+  .hint { color: var(--muted); font-size: 12px; }
+  .error-text { color: var(--error); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ecobici admin</h1>
+  <nav role="tablist">
+    <button role="tab" data-tab="demand" aria-selected="true">Demanda</button>
+    <button role="tab" data-tab="places">Lugares</button>
+    <button role="tab" data-tab="feedback">Feedback</button>
+    <button role="tab" data-tab="plans">Planes</button>
+    <button role="tab" data-tab="sql">SQL</button>
+  </nav>
+  <label>Desde <input type="date" id="since"></label>
+  <label>Hasta <input type="date" id="until"></label>
+  <span id="status">Cargando…</span>
+</header>
+<main>
+  <section id="demand" class="shown">
+    <div class="card"><h2>Planes por día</h2><div id="per_day"></div></div>
+    <div class="card"><h2>Planes por hora (hora local)</h2><div id="per_hour"></div></div>
+    <div class="card"><h2>Cómo se eligió cada extremo</h2><div id="ends"></div></div>
+    <div class="card"><h2>Estaciones de partida más pedidas</h2><div id="pickups"></div></div>
+    <div class="card"><h2>Mejores estaciones de llegada más mostradas</h2><div id="dropoffs"></div></div>
+  </section>
+  <section id="places">
+    <div class="card wide">
+      <h2>Lugares de Photon elegidos (no están en lugares.json)</h2>
+      <div id="place_list"></div>
+    </div>
+  </section>
+  <section id="feedback">
+    <div class="card"><h2>¿Te sirvió?</h2><div id="ratings"></div></div>
+    <div class="card"><h2>¿Encontraste lugar?</h2><div id="trips"></div></div>
+    <div class="card wide"><h2>Comentarios</h2><div id="comments"></div></div>
+  </section>
+  <section id="plans">
+    <div class="card wide">
+      <div class="filters">
+        <label>Tipo de extremo
+          <select id="kind">
+            <option value="">Todos</option>
+            <option>station</option><option>index</option><option>photon</option>
+            <option>address</option><option>map</option><option>location</option>
+          </select>
+        </label>
+        <label>Estación <input id="station" placeholder="id" size="6"></label>
+        <label>Máximo <input id="limit" type="number" value="100" min="1" max="500"></label>
+      </div>
+      <div id="plan_list"></div>
+    </div>
+  </section>
+  <section id="sql">
+    <div class="card wide">
+      <p class="hint">Un SELECT de solo lectura, máximo 1,000 filas. Tablas: <code>plans</code>,
+        <code>candidates</code>, <code>pickups</code>, <code>feedback</code>, <code>stations</code>.
+        <code>local_at</code> es la hora de la captura en la Ciudad de México.</p>
+      <textarea id="query" spellcheck="false">select "to".kind, "to".name, count(*) as plans
+from plans
+group by all
+order by plans desc</textarea>
+      <p><button class="run" id="run">Ejecutar</button> <span class="hint">Ctrl + Enter</span></p>
+      <div id="result"></div>
+    </div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const NUMBER = new Intl.NumberFormat('es-MX', { maximumFractionDigits: 3 });
+const ISO_TIME = /^\d{4}-\d\d-\d\dT\d\d:\d\d/;
+
+function localDay(offsetDays = 0) {
+  const d = new Date(Date.now() + offsetDays * 86400000);
+  return d.toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
+}
+$('since').value = localDay(-6);
+$('until').value = localDay();
+
+function cell(value) {
+  const td = document.createElement('td');
+  if (value === null || value === undefined) td.textContent = '—';
+  else if (typeof value === 'number') { td.textContent = NUMBER.format(value); td.className = 'num'; }
+  else if (typeof value === 'boolean') td.textContent = value ? 'sí' : 'no';
+  else if (ISO_TIME.test(value)) td.textContent = value.replace('T', ' ').replace(/\.\d+/, '');
+  else td.textContent = String(value);
+  return td;
+}
+
+/** A table from a list of objects, or from columns and rows. */
+function table(target, rows, columns) {
+  const box = $(target);
+  box.replaceChildren();
+  if (!rows.length) {
+    box.innerHTML = '<p class="empty">Sin datos en estas fechas.</p>';
+    return;
+  }
+  columns ??= Object.keys(rows[0]);
+  const t = document.createElement('table');
+  const head = t.createTHead().insertRow();
+  for (const c of columns) {
+    const th = document.createElement('th');
+    th.textContent = c;
+    head.append(th);
+  }
+  const body = t.createTBody();
+  for (const r of rows) {
+    const tr = body.insertRow();
+    for (const [i, c] of columns.entries()) tr.append(cell(Array.isArray(r) ? r[i] : r[c]));
+  }
+  box.append(t);
+}
+
+function bars(target, rows, label, value) {
+  const box = $(target);
+  box.replaceChildren();
+  if (!rows.length) {
+    box.innerHTML = '<p class="empty">Sin datos en estas fechas.</p>';
+    return;
+  }
+  const max = Math.max(...rows.map((r) => r[value]));
+  for (const r of rows) {
+    const row = document.createElement('div');
+    row.className = 'bar';
+    const name = document.createElement('span');
+    name.textContent = r[label];
+    const fill = document.createElement('span');
+    fill.style.width = `${(100 * r[value]) / max}%`;
+    const count = document.createElement('span');
+    count.textContent = NUMBER.format(r[value]);
+    row.append(name, fill, count);
+    box.append(row);
+  }
+}
+
+async function api(path, params = {}, options = {}) {
+  const q = new URLSearchParams({ since: $('since').value, until: $('until').value, ...params });
+  for (const [k, v] of [...q]) if (v === '') q.delete(k);
+  const res = await fetch(`/admin/api/${path}?${q}`, options);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail ?? res.status);
+  return body;
+}
+
+const loaders = {
+  async demand() {
+    const d = await api('demand');
+    bars('per_day', d.per_day, 'day', 'plans');
+    bars('per_hour', d.per_hour.map((r) => ({ ...r, hour: `${r.hour}:00` })), 'hour', 'plans');
+    table('ends', d.ends);
+    table('pickups', d.pickups);
+    table('dropoffs', d.dropoffs);
+  },
+  async places() {
+    table('place_list', await api('places'));
+  },
+  async feedback() {
+    const d = await api('feedback');
+    table('ratings', d.ratings);
+    table('trips', d.trips);
+    table('comments', d.comments);
+  },
+  async plans() {
+    table('plan_list', await api('plans', { kind: $('kind').value, station: $('station').value.trim(), limit: $('limit').value }));
+  },
+  async sql() {},
+};
+
+let current = 'demand';
+async function show(tab) {
+  current = tab;
+  for (const b of document.querySelectorAll('nav button')) b.setAttribute('aria-selected', b.dataset.tab === tab);
+  for (const s of document.querySelectorAll('section')) s.classList.toggle('shown', s.id === tab);
+  try {
+    await loaders[tab]();
+  } catch (e) {
+    $('status').textContent = `Error: ${e.message}`;
+    $('status').className = 'error';
+  }
+}
+
+async function status() {
+  try {
+    const s = await api('status');
+    const at = s.loaded_at ? new Date(s.loaded_at).toLocaleTimeString('es-MX') : '—';
+    $('status').textContent = `${NUMBER.format(s.plans)} planes · ${NUMBER.format(s.answers)} respuestas · copia de las ${at}${s.error ? ` · ${s.error}` : ''}`;
+    $('status').className = s.error ? 'error' : '';
+  } catch (e) {
+    $('status').textContent = `Error: ${e.message}`;
+    $('status').className = 'error';
+  }
+}
+
+async function runSql() {
+  $('result').replaceChildren();
+  try {
+    const r = await api('sql', {}, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sql: $('query').value }) });
+    table('result', r.rows, r.columns);
+    if (r.truncated) $('result').insertAdjacentHTML('beforeend', '<p class="hint">Solo las primeras 1,000 filas.</p>');
+  } catch (e) {
+    const p = document.createElement('p');
+    p.className = 'error-text';
+    p.textContent = e.message;
+    $('result').append(p);
+  }
+}
+
+for (const b of document.querySelectorAll('nav button')) b.addEventListener('click', () => show(b.dataset.tab));
+for (const id of ['since', 'until', 'kind', 'station', 'limit']) $(id).addEventListener('change', () => show(current));
+$('run').addEventListener('click', runSql);
+$('query').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) runSql();
+});
+status().then(() => show('demand'));
+</script>
+</body>
+</html>

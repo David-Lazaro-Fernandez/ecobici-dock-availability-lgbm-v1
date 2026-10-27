@@ -1,5 +1,15 @@
 # The DuckDNS subdomain must point to the public IP of this machine.
 # Caddy gets and renews the HTTPS certificate by itself.
 ecobici-docks.duckdns.org {
-	reverse_proxy 127.0.0.1:8000
+	# Only Caddy protects /admin: the API does not check a password.
+	# Make the hash on the server with: caddy hash-password
+	handle /admin* {
+		basic_auth {
+			admin YOUR-ADMIN-PASSWORD-HASH
+		}
+		reverse_proxy 127.0.0.1:8000
+	}
+	handle {
+		reverse_proxy 127.0.0.1:8000
+	}
 }
